@@ -33,10 +33,12 @@ import de.jpx3.intave.executor.Synchronizer;
 import de.jpx3.intave.module.Modules;
 import de.jpx3.intave.module.linker.bukkit.BukkitEventSubscription;
 import de.jpx3.intave.module.nayoro.Nayoro;
+import de.jpx3.intave.module.nayoro.SampleTypes;
 import de.jpx3.intave.module.tracker.player.AbilityTracker;
 import de.jpx3.intave.share.Direction;
 import de.jpx3.intave.share.MovingObjectPosition;
 import de.jpx3.intave.share.Position;
+import de.jpx3.intave.share.RawVector3d;
 import de.jpx3.intave.user.User;
 import de.jpx3.intave.user.UserRepository;
 import de.jpx3.intave.user.meta.MovementMetadata;
@@ -332,18 +334,18 @@ public final class InteractionEmulator implements EventProcessor {
         MovingObjectPosition movingObjectPosition = interaction.raytraceResult();
         endOfRaytrace = movingObjectPosition.hitVec.toPosition();
       }
-      de.jpx3.intave.module.nayoro.event.BlockPlaceEvent placeEvent = de.jpx3.intave.module.nayoro.event.BlockPlaceEvent.create(
-        Position.of(blockX, blockY, blockZ),
-        replace ? null : Position.of(originBlockX, originBlockY, originBlockZ),
-        interaction.targetDirection(),
-        movement.rotation(),
-        eyePosition, endOfRaytrace,
-        interaction.hand(),
+      ac.intave.samples.event.BlockPlaceEvent placeEvent = ac.intave.samples.event.BlockPlaceEvent.create(
+        SampleTypes.position(Position.of(blockX, blockY, blockZ)),
+        replace ? null : SampleTypes.position(Position.of(originBlockX, originBlockY, originBlockZ)),
+        SampleTypes.direction(interaction.targetDirection()),
+        SampleTypes.rotation(movement.rotation()),
+        SampleTypes.position(eyePosition), SampleTypes.position(endOfRaytrace),
+        SampleTypes.hand(interaction.hand()),
         interaction.itemTypeInHand().name(),
         interaction.itemInHand().getAmount(),
-        interaction.facingX(), interaction.facingY(), interaction.facingZ()
+        SampleTypes.vector(new RawVector3d(interaction.facingX(), interaction.facingY(), interaction.facingZ()))
       );
-      nayoro.sinkCallback().accept(user, placeEvent::accept);
+      nayoro.emit(user, placeEvent);
       return EmulationResult.SUCCEEDED;
     } else {
       return EmulationResult.FAILED_CRITICAL;

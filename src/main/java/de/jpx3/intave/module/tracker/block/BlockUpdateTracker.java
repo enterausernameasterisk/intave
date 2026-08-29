@@ -15,6 +15,7 @@ import com.comphenix.protocol.PacketType;
 import com.comphenix.protocol.events.PacketContainer;
 import com.comphenix.protocol.events.PacketEvent;
 import com.comphenix.protocol.wrappers.BlockPosition;
+import com.comphenix.protocol.wrappers.ChunkCoordIntPair;
 import com.comphenix.protocol.wrappers.EnumWrappers;
 import com.comphenix.protocol.wrappers.WrappedBlockData;
 import de.jpx3.intave.block.cache.BlockCache;
@@ -23,6 +24,7 @@ import de.jpx3.intave.check.movement.physics.environment.SimulationEnvironment;
 import de.jpx3.intave.module.Module;
 import de.jpx3.intave.module.feedback.EmptyFeedbackCallback;
 import de.jpx3.intave.module.feedback.PendingCountingFeedbackObserver;
+import de.jpx3.intave.module.linker.bukkit.BukkitEventSubscription;
 import de.jpx3.intave.module.linker.packet.Engine;
 import de.jpx3.intave.module.linker.packet.ListenerPriority;
 import de.jpx3.intave.module.linker.packet.PacketSubscription;
@@ -30,11 +32,13 @@ import de.jpx3.intave.packet.reader.*;
 import de.jpx3.intave.share.Position;
 import de.jpx3.intave.user.User;
 import de.jpx3.intave.user.UserRepository;
+import de.jpx3.intave.user.meta.ConnectionMetadata;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Cancellable;
+import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.util.NumberConversions;
 import org.bukkit.util.Vector;
 
@@ -49,10 +53,11 @@ import static de.jpx3.intave.module.linker.packet.PacketId.Server.*;
 
 public final class BlockUpdateTracker extends Module {
   @PacketSubscription(
-    engine = Engine.INTERNAL,
+//    engine = Engine.INTERNAL,
     packetsOut = {
       MAP_CHUNK, MAP_CHUNK_BULK
-    }
+    },
+    ignoreCancelled = false
   )
   public void chunkUpdate(
     User user, Player player, ChunkCoordinateReader coordinates
@@ -62,10 +67,19 @@ public final class BlockUpdateTracker extends Module {
     if (xCoordinates.length != zCoordinates.length) {
       throw new IllegalStateException();
     }
+    if (xCoordinates.length == 0) {
+      return;
+    }
+    ConnectionMetadata connection = user.meta().connection();
+    Runnable[] confirmations = new Runnable[xCoordinates.length];
+    for (int k = 0; k < xCoordinates.length; k++) {
+      confirmations[k] = connection.pendingClientChunkLoad(xCoordinates[k], zCoordinates[k]);
+    }
     if (xCoordinates.length > 1) {
       user.tickFeedback(
         () -> {
           for (int k = 0; k < xCoordinates.length; k++) {
+            confirmations[k].run();
             BlockUpdateTracker.this.chunkInvalidate(player, xCoordinates[k], zCoordinates[k]);
           }
         },
@@ -81,9 +95,40 @@ public final class BlockUpdateTracker extends Module {
       );
       boolean relevant = distance <= 4 || user.blockCache().hasOverridesInBounds(chunkX << 4, (chunkX + 1) << 4, chunkZ << 4, (chunkZ + 1) << 4);
       user.tickFeedback(
-        () -> BlockUpdateTracker.this.chunkInvalidate(player, chunkX, chunkZ),
+        () -> {
+          confirmations[0].run();
+          BlockUpdateTracker.this.chunkInvalidate(player, chunkX, chunkZ);
+        },
         (relevant ? APPEND_ON_OVERFLOW : APPEND) | SELF_SYNCHRONIZATION
       );
+    }
+  }
+
+  @PacketSubscription(
+    engine = Engine.INTERNAL,
+    packetsOut = {
+      UNLOAD_CHUNK
+    },
+    ignoreCancelled = false
+  )
+  public void chunkUnload(User user, PacketContainer packet) {
+    ChunkCoordIntPair coordinates = packet.getChunkCoordIntPairs().readSafely(0);
+    if (coordinates != null) {
+      user.meta().connection().unloadClientChunk(coordinates.getChunkX(), coordinates.getChunkZ());
+      return;
+    }
+    Integer chunkX = packet.getIntegers().readSafely(0);
+    Integer chunkZ = packet.getIntegers().readSafely(1);
+    if (chunkX != null && chunkZ != null) {
+      user.meta().connection().unloadClientChunk(chunkX, chunkZ);
+    }
+  }
+
+  @BukkitEventSubscription
+  public void worldChange(PlayerChangedWorldEvent event) {
+    Player player = event.getPlayer();
+    if (UserRepository.hasUser(player)) {
+      UserRepository.userOf(player).meta().connection().clearClientChunks();
     }
   }
 

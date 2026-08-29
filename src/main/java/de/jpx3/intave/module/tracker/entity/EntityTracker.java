@@ -11,6 +11,9 @@
 
 package de.jpx3.intave.module.tracker.entity;
 
+import ac.intave.samples.event.EntityMoveEvent;
+import ac.intave.samples.event.EntityRemoveEvent;
+import ac.intave.samples.event.EntitySpawnEvent;
 import com.comphenix.protocol.PacketType;
 import com.comphenix.protocol.events.PacketContainer;
 import com.comphenix.protocol.events.PacketEvent;
@@ -33,10 +36,7 @@ import de.jpx3.intave.module.feedback.FeedbackObserver;
 import de.jpx3.intave.module.linker.packet.ListenerPriority;
 import de.jpx3.intave.module.linker.packet.PacketSubscription;
 import de.jpx3.intave.module.nayoro.Nayoro;
-import de.jpx3.intave.module.nayoro.event.EntityMoveEvent;
-import de.jpx3.intave.module.nayoro.event.EntityRemoveEvent;
-import de.jpx3.intave.module.nayoro.event.EntitySpawnEvent;
-import de.jpx3.intave.module.nayoro.event.sink.EventSink;
+import de.jpx3.intave.module.nayoro.SampleTypes;
 import de.jpx3.intave.packet.PacketSender;
 import de.jpx3.intave.packet.PacketTypes;
 import de.jpx3.intave.packet.reader.EntityIterable;
@@ -65,8 +65,6 @@ import org.bukkit.inventory.meta.ItemMeta;
 import javax.annotation.Nullable;
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 
 import static de.jpx3.intave.check.movement.physics.environment.MoveMetric.TELEPORT;
 import static de.jpx3.intave.module.feedback.FeedbackOptions.*;
@@ -87,6 +85,7 @@ public final class EntityTracker extends Module {
 //  private final PeriodicTickedEntitySelector tickedEntitySelector;
 
   private final boolean NEW_POSITION_PROCESSING_1_9 = MinecraftVersions.VER1_9_0.atOrAbove();
+  private final boolean NEW_POSITION_PROCESSING_1_14 = MinecraftVersions.VER1_14_0.atOrAbove();
 
   public EntityTracker(IntavePlugin plugin) {
     this.plugin = plugin;
@@ -687,11 +686,10 @@ public final class EntityTracker extends Module {
     if (entityIdBoxed == null) {
       return;
     }
-    int entityId = entityIdBoxed;
     /* NOTE: An entity can't be created by the entityID when the entity doesn't
      gets teleported afterwards because the Bukkit location isn't specific enough */
 
-    Entity entity = entityByIdentifier(user, entityId);
+    Entity entity = entityByIdentifier(user, entityIdBoxed);
     if (entity == null) {
       return;
     }
@@ -704,13 +702,36 @@ public final class EntityTracker extends Module {
 
     MovementMetadata movement = user.meta().movement();
     double distanceBefore = entity.distanceToPlayerCache > 8 ? 10 : entity.immediateServerPosition.distance(movement.positionX, movement.positionY, movement.positionZ);
-    entity.immediateEntityMovement(packet);
+    long dx;
+    long dy;
+    long dz;
+    double divisor;
+    if (NEW_POSITION_PROCESSING_1_14) {
+      StructureModifier<Short> shorts = packet.getShorts();
+      dx = shorts.readSafely(0);
+      dy = shorts.readSafely(1);
+      dz = shorts.readSafely(2);
+      divisor = 4096d;
+    } else if (NEW_POSITION_PROCESSING_1_9) {
+      StructureModifier<Integer> integers = packet.getIntegers();
+      dx = integers.readSafely(1);
+      dy = integers.readSafely(2);
+      dz = integers.readSafely(3);
+      divisor = 4096d;
+    } else {
+      StructureModifier<Byte> bytes = packet.getBytes();
+      dx = bytes.readSafely(0);
+      dy = bytes.readSafely(1);
+      dz = bytes.readSafely(2);
+      divisor = 32d;
+    }
+    entity.applyImmediateRelativeMove(dx, dy, dz, divisor);
     double distanceAfter = distanceBefore > 8 ? 10 : entity.immediateServerPosition.distance(movement.positionX, movement.positionY, movement.positionZ);
 
     if (entity.typeData().isLivingEntity() && entity.tracingEnabled()) {
       EmptyFeedbackCallback task = () -> {
         entity.verifiedPosition = false;
-        entity.handleEntityMovement(user, packet, true);
+        entity.applyRelativeMove(dx, dy, dz, divisor);
         nayoroEntityPositionUpdate(player, entity);
       };
       FeedbackObserver tracker = entity.feedbackTracker();
@@ -720,12 +741,10 @@ public final class EntityTracker extends Module {
       }
       user.tracedPacketTickFeedback(event, task, tracker, options);
     } else {
-      entity.handleEntityMovement(user, packet, false);
+      entity.applyRelativeMove(dx, dy, dz, divisor);
       entity.clientSynchronized = false;
     }
   }
-
-  private final BiConsumer<User, Consumer<EventSink>> sinkCallback = Modules.nayoro().sinkCallback();
 
   private void nayoroEntitySpawn(User user, Entity entity) {
     Nayoro nayoro = Modules.nayoro();
@@ -735,10 +754,10 @@ public final class EntityTracker extends Module {
     EntitySpawnEvent event = new EntitySpawnEvent(
       entity.entityId(),
       entity.entityName(),
-      entity.typeData().size(),
-      entity.position.toPosition()
+      SampleTypes.hitboxSize(entity.typeData().size()),
+      SampleTypes.position(entity.position.toPosition())
     );
-    sinkCallback.accept(user, event::accept);
+    nayoro.emit(user, event);
   }
 
   private void nayoroEntityDespawn(User user, Entity entity) {
@@ -747,7 +766,7 @@ public final class EntityTracker extends Module {
       return;
     }
     EntityRemoveEvent event = new EntityRemoveEvent(entity.entityId());
-    sinkCallback.accept(user, event::accept);
+    nayoro.emit(user, event);
   }
 
   private void nayoroEntityPositionUpdate(Player player, Entity entity) {
@@ -759,11 +778,11 @@ public final class EntityTracker extends Module {
     Entity.EntityPositionContext lastPosition = entity.lastPosition;
     EntityMoveEvent event = new EntityMoveEvent(
       entity.entityId(),
-      position.posX, position.posY, position.posZ,
-      lastPosition.posX, lastPosition.posY, lastPosition.posZ,
-      0, 0, 0, 0
+      SampleTypes.position(position.toPosition()), SampleTypes.position(lastPosition.toPosition()),
+      new ac.intave.samples.share.Rotation(0, 0),
+      new ac.intave.samples.share.Rotation(0, 0)
     );
-    sinkCallback.accept(UserRepository.userOf(player), event::accept);
+    nayoro.emit(UserRepository.userOf(player), event);
   }
 
   private Entity spawnMobByBukkitEntity(User user, org.bukkit.entity.Entity bukkitEntity) {
@@ -1257,6 +1276,11 @@ public final class EntityTracker extends Module {
 
   @Nullable
   public static Entity entityByIdentifier(User user, int entityID) {
+    return user.meta().connection().entityBy(entityID);
+  }
+
+  @Nullable
+  public static Entity entityByIdentifier(User user, Integer entityID) {
     return user.meta().connection().entityBy(entityID);
   }
 }

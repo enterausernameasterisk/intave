@@ -1,16 +1,24 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.module.actionbar;
 
 import com.comphenix.protocol.events.PacketContainer;
 import com.comphenix.protocol.events.PacketEvent;
 import com.comphenix.protocol.wrappers.EnumWrappers;
-import com.comphenix.protocol.wrappers.WrappedChatComponent;
-import de.jpx3.intave.adapter.MinecraftVersions;
 import de.jpx3.intave.executor.TaskTracker;
 import de.jpx3.intave.module.Module;
 import de.jpx3.intave.module.Modules;
 import de.jpx3.intave.module.linker.packet.ListenerPriority;
 import de.jpx3.intave.module.linker.packet.PacketSubscription;
-import de.jpx3.intave.packet.PacketSender;
 import de.jpx3.intave.player.ActionBar;
 import de.jpx3.intave.user.User;
 import de.jpx3.intave.user.UserRepository;
@@ -21,8 +29,6 @@ import java.util.UUID;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-import static com.comphenix.protocol.PacketType.Play.Server.CHAT;
-import static com.comphenix.protocol.PacketType.Play.Server.SET_ACTION_BAR_TEXT;
 import static de.jpx3.intave.module.linker.packet.PacketId.Server.CHAT_OUT;
 
 public final class ActionBarDisplayer extends Module {

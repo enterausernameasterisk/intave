@@ -32,6 +32,8 @@ public final class Simulation {
   private SimulationEnvironment environment;
   private String blueDetails = "";
   private String purpleDetails = "";
+  private int simulationCount;
+  private int searchDepth;
 
   // Stable branch fingerprint used to online-optimize search ordering.
   private long branchFrequencyKey;
@@ -65,6 +67,8 @@ public final class Simulation {
     this.simulationResult = simulationResult;
     this.blueDetails = "";
     this.purpleDetails = "";
+		this.simulationCount = 0;
+		this.searchDepth = 0;
 		this.branchFrequencyKey = 0L;
   }
 
@@ -75,6 +79,8 @@ public final class Simulation {
     this.canFinishExplicitTick = false;
     this.blueDetails = "";
     this.purpleDetails = "";
+    this.simulationCount = 0;
+    this.searchDepth = 0;
   }
 
   public void setEnvironment(SimulationEnvironment myEnv) {
@@ -115,6 +121,10 @@ public final class Simulation {
     return environment.lastPosition().add(offsetMotion());
   }
 
+  public Position postTickPosition() {
+    return environment.verifiedLastPosition().add(offsetMotion());
+  }
+
   public Motion offsetMotion() {
     return simulationResult.offsetMotion();
   }
@@ -147,6 +157,26 @@ public final class Simulation {
     return purpleDetails;
   }
 
+  public void setSimulationCount(int simulationCount) {
+    this.simulationCount = simulationCount;
+  }
+
+  public void addSimulationCount(int simulationCount) {
+    this.simulationCount += simulationCount;
+  }
+
+  public int simulationCount() {
+    return simulationCount;
+  }
+
+  public void setSearchDepth(int searchDepth) {
+    this.searchDepth = searchDepth;
+  }
+
+  public int searchDepth() {
+    return searchDepth;
+  }
+
   public void setBranchFrequencyKey(long branchFrequencyKey) {
     this.branchFrequencyKey = branchFrequencyKey;
   }
@@ -159,7 +189,7 @@ public final class Simulation {
     SimulationEnvironment environment, double limit
   ) {
     Position lastReportedPosition = environment.lastPosition();
-    Position newPosition = environment.verifiedLastPosition().add(offsetMotion());
+    Position newPosition = postTickPosition();
     double distance = lastReportedPosition.distance(newPosition);
     return distance < limit;
   }
@@ -175,6 +205,8 @@ public final class Simulation {
   public Simulation reusableCopy() {
     Simulation copy = new Simulation(configuration, environment, simulationResult);
     copy.blueDetails = blueDetails;
+    copy.simulationCount = simulationCount;
+    copy.searchDepth = searchDepth;
     copy.canFinishExplicitTick = canFinishExplicitTick;
 //    copy.purpleDetails = purpleDetails;
     copy.fromExhaustiveSearch = fromExhaustiveSearch;

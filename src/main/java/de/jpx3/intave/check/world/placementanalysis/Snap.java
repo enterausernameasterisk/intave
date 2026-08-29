@@ -119,7 +119,7 @@ public final class Snap extends PlayerCheckPart<PlacementAnalysis> {
 				if (absYawDiff(yawAt(1), yawAt(3)) < 3 && absPitchDiff(pitchAt(1), pitchAt(3)) < 3) {
 					Violation violation = Violation.builderFor(PlacementAnalysis.class)
 						.forPlayer(player)
-						.withCustomThreshold(PlacementAnalysis.legacyConfigurationLayout() ? "thresholds" : "cloud-thresholds.on-premise")
+						.withDefaultThreshold()
 						.withMessage(COMMON_FLAG_MESSAGE).withDetails("back snap")
 						.appendFlags(DISPLAY_IN_ALL_VERBOSE_MODES)
 						.withVL(0).build();

@@ -71,7 +71,6 @@ public final class Sneak extends PlayerCheckPart<PlacementAnalysis> {
 						.withMessage(COMMON_FLAG_MESSAGE)
 						.withDetails(ticksPerBlock + " t/b in a straight line without sneaking")
 						.appendFlags(DISPLAY_IN_ALL_VERBOSE_MODES)
-						.withCustomThreshold(PlacementAnalysis.legacyConfigurationLayout() ? "thresholds" : "cloud-thresholds.on-premise")
 						.withVL(3).build();
 					ViolationContext violationContext = Modules.violationProcessor().processViolation(violation);
 					if (violationContext.violationLevelAfter() > 20) {

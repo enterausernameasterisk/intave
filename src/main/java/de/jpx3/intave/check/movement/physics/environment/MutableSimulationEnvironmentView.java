@@ -12,6 +12,8 @@
 package de.jpx3.intave.check.movement.physics.environment;
 
 import de.jpx3.intave.block.fluid.Fluid;
+import de.jpx3.intave.block.tick.ShulkerBox;
+import de.jpx3.intave.block.tick.piston.PistonSlimeMovement;
 import de.jpx3.intave.check.movement.physics.config.MovementConfiguration;
 import de.jpx3.intave.check.movement.physics.simulator.BoatSimulator.Status;
 import de.jpx3.intave.check.movement.physics.simulator.Simulation;
@@ -28,17 +30,14 @@ import org.bukkit.Material;
 import org.bukkit.util.Vector;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.EnumMap;
-import java.util.List;
+import java.util.*;
 
 import static de.jpx3.intave.check.movement.physics.environment.MoveMetric.*;
 import static de.jpx3.intave.check.movement.physics.environment.MovementCharacteristics.resolveFriction;
 import static de.jpx3.intave.share.ClientMath.cos;
 import static de.jpx3.intave.share.ClientMath.sin;
 
-public final class MutableSimulationEnvironmentView implements SimulationEnvironment {
+final class MutableSimulationEnvironmentView implements SimulationEnvironment {
   private final SimulationEnvironment delegate;
   private List<EnvironmentMutation> deferredMutations;
 
@@ -117,6 +116,8 @@ public final class MutableSimulationEnvironmentView implements SimulationEnviron
   private boolean stepHeightOverridden;
   private float stepHeight;
   private boolean postTickMotionCandidatesOverridden;
+  private boolean pistonSlimeMovementsOverridden;
+  private boolean shulkerBoxesOverridden;
   private BlockPosition mainSupportingBlockPos;
   private boolean mainSupportingBlockPosOverridden;
   private boolean onGroundNoBlocks;
@@ -126,6 +127,8 @@ public final class MutableSimulationEnvironmentView implements SimulationEnviron
   private boolean frictionMaterialOverridden, collideMaterialOverridden,
     previousFrictionMaterialOverridden, previousCollideMaterialOverridden;
   private List<PostTickSimulation> postTickSimulations;
+  private List<PistonSlimeMovement> pistonSlimeMovements;
+  private Map<BlockPosition, ShulkerBox> shulkerBoxes;
   private boolean sleepingOverridden;
   private boolean sleeping;
 
@@ -328,6 +331,42 @@ public final class MutableSimulationEnvironmentView implements SimulationEnviron
     List<PostTickSimulation> candidatesCopy = new ArrayList<>(postTickSimulations);
     this.postTickSimulations = candidatesCopy;
     defer(environment -> environment.setPostTickMotionCandidates(candidatesCopy));
+  }
+
+  @Override
+  public List<PistonSlimeMovement> pistonSlimeMovements() {
+    if (!pistonSlimeMovementsOverridden) {
+      return delegate.pistonSlimeMovements();
+    }
+    return pistonSlimeMovements.isEmpty()
+      ? Collections.emptyList()
+      : Collections.unmodifiableList(pistonSlimeMovements);
+  }
+
+  @Override
+  public void setPistonSlimeMovements(@NotNull List<PistonSlimeMovement> pistonSlimeMovements) {
+    pistonSlimeMovementsOverridden = true;
+    List<PistonSlimeMovement> movementsCopy = new ArrayList<>(pistonSlimeMovements);
+    this.pistonSlimeMovements = movementsCopy;
+    defer(environment -> environment.setPistonSlimeMovements(movementsCopy));
+  }
+
+  @Override
+  public Map<BlockPosition, ShulkerBox> shulkerBoxes() {
+    if (!shulkerBoxesOverridden) {
+      return delegate.shulkerBoxes();
+    }
+    return shulkerBoxes.isEmpty()
+      ? Collections.emptyMap()
+      : Collections.unmodifiableMap(shulkerBoxes);
+  }
+
+  @Override
+  public void setShulkerBoxes(@NotNull Map<BlockPosition, ShulkerBox> shulkerBoxes) {
+    shulkerBoxesOverridden = true;
+    Map<BlockPosition, ShulkerBox> boxesCopy = new LinkedHashMap<>(shulkerBoxes);
+    this.shulkerBoxes = boxesCopy;
+    defer(environment -> environment.setShulkerBoxes(boxesCopy));
   }
 
   @Override

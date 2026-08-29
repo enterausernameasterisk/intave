@@ -1,14 +1,24 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.module.violation;
 
+import ac.intave.cloud.protocol.packets.ServerboundViolation;
 import de.jpx3.intave.IntaveLogger;
-import de.jpx3.intave.IntavePlugin;
 import de.jpx3.intave.access.check.event.IntaveCommandExecutionEvent;
 import de.jpx3.intave.access.check.event.IntaveViolationEvent;
 import de.jpx3.intave.access.player.trust.TrustFactor;
 import de.jpx3.intave.check.Check;
 import de.jpx3.intave.check.CheckStatistics;
-import de.jpx3.intave.connect.cloud.LogTransmittor;
-import de.jpx3.intave.connect.proxy.protocol.packets.IntavePacketOutKicked;
+import de.jpx3.intave.check.other.Cloud;
 import de.jpx3.intave.executor.Synchronizer;
 import de.jpx3.intave.math.MathHelper;
 import de.jpx3.intave.metric.ServerHealth;
@@ -223,8 +233,6 @@ public final class ViolationProcessor extends Module {
       LOGGER_MESSAGE_LAYOUT, player.getName(), trustFactor,
       message, details, vlAdded, vlAfterViolation, checkName
     );
-    LogTransmittor logTransmittor = IntavePlugin.singletonInstance().logTransmittor();
-    logTransmittor.addPlayerLog(player, "(DET) " + consoleMessage);
     consoleMessage += " | TPS: " + ServerHealth.stringFormattedTick() + " Ping: " + user.latency() + "ms";
     plugin.logger().violation(consoleMessage);
   }
@@ -233,13 +241,26 @@ public final class ViolationProcessor extends Module {
     if (violationContext.completed()) {
       return;
     }
-//    GlobalStatisticsRecorder recorder = plugin.analytics().recorderOf(GlobalStatisticsRecorder.class);
     Violation violation = violationContext.violation();
-//    recorder.recordViolation(violation.check().name());
     Player player = violation.findPlayer().orElseThrow(IllegalStateException::new);
     User user = UserRepository.userOf(player);
     LongTermViolationStorage violationStorage = user.storageOf(LongTermViolationStorage.class);
     violationStorage.noteViolation(violationContext);
+    if (violation.checkClass() == Cloud.class) {
+      return;
+    }
+    String checkName = violation.check().name().toLowerCase(Locale.ROOT);
+    String threshold = violation.threshold();
+    String message = violation.message();
+    String details = violation.details();
+    double addedViolationPoints = violation.addedViolationPoints();
+    double currentViolationLevel = violationContext.violationLevelAfter();
+    user.transmitCloudPacket(playerId -> new ServerboundViolation(
+      playerId, checkName, threshold,
+      message, details,
+      addedViolationPoints,
+      currentViolationLevel
+    ));
   }
 
   private void processViolationLevelIncrease(ViolationContext violationContext) {
@@ -316,35 +337,10 @@ public final class ViolationProcessor extends Module {
   private void executeCommand(ViolationContext violationContext, String command) {
     Violation violation = violationContext.violation();
     Player player = violation.findPlayer().orElseThrow(IllegalStateException::new);
-    String checkName = violation.check().name().toLowerCase(Locale.ROOT);
-    Synchronizer.synchronize(() -> {
-      boolean playerRemoved = command.startsWith("ban") || command.startsWith("kick");
-      if (playerRemoved) {
-        Modules.mitigate().reconnectionLimiter().ban(player.getAddress().getAddress(), player.getUniqueId(), checkName);
-        plugin.proxy().sendPacket(player, new IntavePacketOutKicked(
-          player.getUniqueId(),
-          checkName,
-          violation.message(),
-          violationContext.violationLevelAfter()
-        ));
-      }
-
-      LogTransmittor logTransmittor = IntavePlugin.singletonInstance().logTransmittor();
-      logTransmittor.addPlayerLog(player, "(EXE) " + command);
-
-      if (command.contains("{log-id}")) {
-        logTransmittor.awaitLogIdOf(player, logId -> {
-          String commandWithLogId = command.replace("{log-id}", logId);
-          Synchronizer.synchronize(() -> {
-            plugin.logger().commandExecution(commandWithLogId);
-            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), commandWithLogId);
-          });
-        });
-      } else {
-
-        plugin.logger().commandExecution(command);
-        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
-      }
+	  Synchronizer.synchronize(() -> {
+      String resolvedCommand = command.replace("{log-id}", "No Log-Id");
+      plugin.logger().commandExecution(resolvedCommand);
+      Bukkit.dispatchCommand(Bukkit.getConsoleSender(), resolvedCommand);
     });
   }
 

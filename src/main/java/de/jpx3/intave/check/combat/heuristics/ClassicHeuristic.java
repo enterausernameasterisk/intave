@@ -41,7 +41,7 @@ public class ClassicHeuristic<M extends CheckCustomMetadata> extends MetaCheckPa
       .forUser(user).withMessage(message)
       .withDetails(verboseDetails)
       .withVL(violationLevelIncrease)
-      .withCustomThreshold("classic.thresholds")
+      .withDefaultThreshold()
       .build();
     Modules.violationProcessor().processViolation(violation);
   }

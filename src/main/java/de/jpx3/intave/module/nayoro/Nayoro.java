@@ -1,22 +1,33 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.module.nayoro;
 
-import com.google.common.collect.Sets;
+import ac.intave.samples.event.Event;
+import ac.intave.samples.event.EventSink;
+import ac.intave.samples.share.Classifier;
 import de.jpx3.intave.IntaveControl;
 import de.jpx3.intave.IntavePlugin;
 import de.jpx3.intave.cleanup.GarbageCollector;
-import de.jpx3.intave.connect.cloud.Cloud;
 import de.jpx3.intave.executor.Synchronizer;
 import de.jpx3.intave.module.Module;
 import de.jpx3.intave.module.Modules;
 import de.jpx3.intave.module.linker.bukkit.BukkitEventSubscription;
-import de.jpx3.intave.module.nayoro.event.sink.EventSink;
-import de.jpx3.intave.module.nayoro.event.sink.ForwardEventSink;
+import de.jpx3.intave.module.nayoro.sink.ForwardEventSink;
+import de.jpx3.intave.module.nayoro.stream.ManualBufferedOutputStream;
 import de.jpx3.intave.user.User;
 import de.jpx3.intave.user.UserLocal;
 import de.jpx3.intave.user.UserRepository;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
-import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.jetbrains.annotations.NotNull;
 
@@ -25,13 +36,10 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 import java.util.stream.Collectors;
-import java.util.zip.InflaterInputStream;
-
-import static de.jpx3.intave.module.nayoro.OperationalMode.*;
 
 public final class Nayoro extends Module {
   private static final OperationalMode MODE = IntaveControl.SAMPLE_OPERATIONAL_MODE;
@@ -39,7 +47,7 @@ public final class Nayoro extends Module {
   private final UserLocal<Set<EventSink>> eventSinks = UserLocal.withInitial(this::defaultSinksFor, this::disableRecordingFor);
   private final Map<UUID, Boolean> recording = GarbageCollector.watch(new ConcurrentHashMap<>());
   private final Map<UUID, OperationalMode> recordingMode = GarbageCollector.watch(new ConcurrentHashMap<>());
-  private final PacketEventDispatch packetEventDispatch = new PacketEventDispatch(sinkCallback());
+  private final PacketEventDispatch packetEventDispatch = new PacketEventDispatch(this::emit);
   private final List<Playback> playbacks = new ArrayList<>();
 
   private final ReentrantLock localRecordingLock = new ReentrantLock();
@@ -57,27 +65,6 @@ public final class Nayoro extends Module {
   }
 
   @BukkitEventSubscription
-  public void on(PlayerJoinEvent join) {
-    Player player = join.getPlayer();
-    askForSampleTransmission(player);
-  }
-
-  public synchronized void askForSampleTransmission(Player player) {
-    User user = UserRepository.userOf(player);
-//    if (IntaveControl.GOMME_MODE && MODE == GOMME_UPLOAD && player.hasPermission("intave.sample.allow")) {
-//      enableRecordingFor(user, null, GOMME_UPLOAD);
-//      return;
-//    }
-    Cloud cloud = IntavePlugin.singletonInstance().cloud();
-    if (!cloud.available()) {
-      return;
-    }
-    cloud.requestSampleTransmission(player, classifier -> {
-      enableRecordingFor(user, classifier, CLOUD_TRANSMISSION);
-    });
-  }
-
-  @BukkitEventSubscription
   public void on(PlayerQuitEvent quit) {
     User user = UserRepository.userOf(quit.getPlayer());
     if (recordingActiveFor(user)) {
@@ -85,11 +72,22 @@ public final class Nayoro extends Module {
     }
   }
 
-  public synchronized void enableRecordingFor(User user, Classifier classifier, OperationalMode mode) {
+  @Deprecated
+  public synchronized void enableRecordingFor(
+    User user, Classifier classifier,
+    OperationalMode mode
+  ) {
+    enableRecordingFor(user, classifier, mode, UUID.randomUUID());
+  }
+
+  public synchronized void enableRecordingFor(
+    User user, Classifier classifier,
+    OperationalMode mode, UUID transmissionId
+  ) {
     localRecordingLock.lock();
     try {
       if (!Bukkit.isPrimaryThread()) {
-        Synchronizer.synchronize(() -> enableRecordingFor(user, classifier, mode));
+        Synchronizer.synchronize(() -> enableRecordingFor(user, classifier, mode, transmissionId));
         return;
       }
       if (recordingActiveFor(user)) {
@@ -99,8 +97,8 @@ public final class Nayoro extends Module {
       recordingMode.put(user.id(), mode);
       Sample sample = new Sample();
       samples.put(user.id(), sample);
-      OutputStream output = writeStreamFor(user.player(), sample, mode);
-      RecordEventSink recordEventSink = new RecordEventSink(new LiveEnvironment(user), new DataOutputStream(output), classifier);
+      OutputStream output = writeStreamFor(user.player(), sample, mode, transmissionId);
+      RecordEventSink recordEventSink = new RecordEventSink(new LiveEnvironment(user), output, classifier);
       eventSinks.get(user).add(recordEventSink);
     } finally {
       localRecordingLock.unlock();
@@ -132,24 +130,17 @@ public final class Nayoro extends Module {
       }
       recording.put(user.id(), false);
       OperationalMode mode = recordingMode.get(user.id());
-      List<EventSink> remove = eventSinks.get(user).stream()
+      Set<EventSink> sinks = eventSinks.get(user);
+      List<EventSink> remove = sinks.stream()
         .filter(eventSink -> eventSink instanceof RecordEventSink)
-        .peek(EventSink::close)
         .collect(Collectors.toList());
-      remove.forEach(eventSinks.get(user)::remove);
+      // Stop new dispatches before closing; an in-flight snapshot is handled by RecordEventSink.
+      remove.forEach(sinks::remove);
+      remove.forEach(EventSink::close);
       Sample sample = samples.remove(user.id());
-      if (mode == GOMME_UPLOAD) {
-        try {
-          sample.uploadAndDelete();
-        } catch (IOException e) {
-          throw new RuntimeException(e);
-        }
-      }
       if (sample != null && !mode.keepCopyOfSamples()) {
         sample.delete();
       }
-      Cloud cloud = IntavePlugin.singletonInstance().cloud();
-      cloud.noteEndOfSampleTransmission(user.player());
     } finally {
       localRecordingLock.unlock();
     }
@@ -159,7 +150,12 @@ public final class Nayoro extends Module {
     return eventSinks.get(user);
   }
 
-  public OutputStream writeStreamFor(Player player, Sample sample, OperationalMode mode) {
+  private final static int CLOUD_TRANSMISSION_BUFFER_SIZE = 1024 * 8;
+
+  public OutputStream writeStreamFor(
+    Player player, Sample sample,
+    OperationalMode mode, UUID transmissionId
+  ) {
     switch (mode) {
       case DISABLE:
         return new OutputStream() {
@@ -167,12 +163,10 @@ public final class Nayoro extends Module {
           public void write(int b) {}
         };
 
-      case GOMME_UPLOAD:
-        return sample.resource().writeStream();
-      case CLOUD_STORAGE:
       case CLOUD_TRANSMISSION:
-        boolean storage = mode == CLOUD_STORAGE;
         return new ManualBufferedOutputStream(new OutputStream() {
+          private final AtomicInteger sampleSubIndex = new AtomicInteger(0);
+
           @Override
           public void write(int b) {
             throw new UnsupportedOperationException("Not implemented, expected buffered output stream");
@@ -185,19 +179,28 @@ public final class Nayoro extends Module {
 
           @Override
           public void write(byte @NotNull [] b, int off, int len) {
+            if (len == 0) {
+              return;
+            }
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
             outputStream.write(b, off, len);
             byte[] writeStream = outputStream.toByteArray();
             ByteBuffer buffer = ByteBuffer.wrap(writeStream);
             IntavePlugin plugin = IntavePlugin.singletonInstance();
-            plugin.cloud().uploadSample(player, buffer);
+            plugin.cloud().uploadSample(player, buffer, transmissionId, sampleSubIndex.getAndIncrement());
           }
 
           @Override
-          public void flush() throws IOException {
+          public void flush() {
             // no-op
           }
-        }, 1024 * 24);
+
+          @Override
+          public void close() {
+            IntavePlugin plugin = IntavePlugin.singletonInstance();
+            plugin.cloud().completeSampleTransmission(player, transmissionId, sampleSubIndex.get());
+          }
+        }, CLOUD_TRANSMISSION_BUFFER_SIZE);
       case LOCAL_STORAGE:
         return sample.resource().writeStream();
       default:
@@ -224,10 +227,8 @@ public final class Nayoro extends Module {
       }
       int available = sampleFile.length() > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) sampleFile.length();
       InputStream inputStream = Files.newInputStream(sampleFile.toPath());
-      inputStream = new InflaterInputStream(inputStream);
       inputStream = new BufferedInputStream(inputStream, 1024 * 1024);
-      DataInputStream dataInput = new DataInputStream(inputStream);
-      Playback playback = new InstantPlayback(dataInput, Runnable::run, playbacks::remove);
+      Playback playback = new InstantPlayback(inputStream, Runnable::run, playbacks::remove);
       playbacks.add(playback);
       playback.start();
       user.player().sendMessage(String.format("§aPlayback of length %d started.", available));
@@ -236,8 +237,8 @@ public final class Nayoro extends Module {
     }
   }
 
-  public BiConsumer<User, Consumer<EventSink>> sinkCallback() {
-    return (user, applyEventSink) -> eventSinks.get(user).forEach(applyEventSink);
+  public void emit(User user, Event event) {
+    eventSinks.get(user).forEach(event::accept);
   }
 
   public Set<EventSink> defaultSinksFor(User user) {
@@ -247,6 +248,6 @@ public final class Nayoro extends Module {
     PlayerContainer player = new UserPlayerContainer(
       user, new LiveEnvironment(user)
     );
-    return Sets.newHashSet(new ForwardEventSink(player));
+    return new CopyOnWriteArraySet<>(Collections.singleton(new ForwardEventSink(player)));
   }
 }

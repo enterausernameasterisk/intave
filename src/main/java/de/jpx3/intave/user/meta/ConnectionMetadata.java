@@ -1,3 +1,14 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.user.meta;
 
 import com.comphenix.protocol.PacketType;
@@ -5,11 +16,11 @@ import com.comphenix.protocol.ProtocolLibrary;
 import com.comphenix.protocol.events.PacketContainer;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import com.google.gson.JsonObject;
 import de.jpx3.intave.IntaveControl;
 import de.jpx3.intave.annotate.DispatchTarget;
 import de.jpx3.intave.annotate.Nullable;
 import de.jpx3.intave.executor.RateLimiter;
+import de.jpx3.intave.math.MathHelper;
 import de.jpx3.intave.math.Occurrences;
 import de.jpx3.intave.module.feedback.DelayedPacket;
 import de.jpx3.intave.module.feedback.FeedbackQueue;
@@ -20,10 +31,8 @@ import de.jpx3.intave.packet.PacketSender;
 import org.bukkit.entity.Player;
 
 import java.util.*;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.DelayQueue;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
 public final class ConnectionMetadata {
@@ -34,12 +43,15 @@ public final class ConnectionMetadata {
   private final Map<Integer, Entity> entitiesById = Maps.newConcurrentMap();
   private final Map<Integer, Integer> entityVehicles = Maps.newConcurrentMap();
   private final Map<Integer, Set<Integer>> entityMounts = Maps.newConcurrentMap();
+  private static final long LOADED_CLIENT_CHUNK = 0L;
+  private final Map<Long, Long> clientChunkStates = Maps.newConcurrentMap();
+  private final AtomicLong clientChunkSequence = new AtomicLong();
 
   private final Set<Integer> entityIds = new HashSet<>();
   private final List<Entity> synchronizedEntities = Lists.newCopyOnWriteArrayList();
   public PendingCountingFeedbackObserver pendingBlockUpdates;
   private List<Entity> tickedEntities = new CopyOnWriteArrayList<>();
-  private final Map<Long, Long> remainingPingPacketTimestamps = Maps.newConcurrentMap();
+  private final Map<Long, Deque<Long>> remainingPingPacketTimestamps = new ConcurrentHashMap<>();
   private final List<Long> latencyDifferenceBalance = Lists.newCopyOnWriteArrayList();
 
   // not used
@@ -74,15 +86,16 @@ public final class ConnectionMetadata {
     SECOND_IS_DECOY,
   }
 
-//  private final Set<Integer> takenLocalEntityIds = new HashSet<>();
+  public enum ClientChunkState {
+    UNLOADED,
+    PENDING,
+    LOADED,
+  }
+
   private int localEntityIdCounter = 1;
   public long lastCCCInfoMessageSent = 0;
   public boolean sendAsyncMessage = false;
   public boolean eligibleForTransactionTimeout = false;
-  public int speculativeMovementTicks = 0;
-  public int randomTransactionIdShift = ThreadLocalRandom.current().nextInt(1, 2000);
-  public int attacksQueued;
-  public long lastAttackQueueRequest;
 
   private final Deque<Object> bufferEnqueue = new ArrayDeque<>(8500);
   private final DelayQueue<DelayedPacket> delayQueue = new DelayQueue<>();
@@ -113,6 +126,7 @@ public final class ConnectionMetadata {
 
   public int nextWindowOpenSlots = 0;
   public boolean assumeWindowOpen = false;
+  public int assumedWindowId = 0;
 
   // Lag identification
   private long lastMovementTimestamps;
@@ -121,9 +135,6 @@ public final class ConnectionMetadata {
   private static final long DELAY_PURGE_INTERVAL = 1000 * 60;
   public final Occurrences<Integer> attackDelays = new Occurrences<>(DELAY_PURGE_INTERVAL);
   public final Occurrences<Integer> feedbackDelays = new Occurrences<>(DELAY_PURGE_INTERVAL);
-
-  // labymod data
-  public JsonObject labyModData = new JsonObject();
 
   public ConnectionMetadata(Player player) {
     this.player = player;
@@ -161,14 +172,7 @@ public final class ConnectionMetadata {
   }
 
   private double averageOf(List<? extends Number> data) {
-    double sum = 0;
-    for (Number element : data) {
-      sum += element.doubleValue();
-    }
-    if (sum == 0) {
-      return 0;
-    }
-    return sum / data.size();
+	  return MathHelper.averageOf(data);
   }
 
   private long transactionSum = 0;
@@ -215,35 +219,72 @@ public final class ConnectionMetadata {
     return shortTransactionNum == 0 ? 0 : shortTransactionSum / shortTransactionNum;
   }
 
-//  public void receivedTransactionAfter(long milliseconds) {
-//    if (transactionPings.size() > 1024 * 8) {
-//      transactionPings.remove(0);
-//    }
-//    transactionPings.add(milliseconds);
-//  }
-//
-//  private long transactionPingCache = -1;
-//  private long lastTPCRefresh = 0;
-//
-//  public long transactionPingAverage() {
-//    if (System.currentTimeMillis() - lastTPCRefresh > 5000) {
-//      long sum = 0;
-//      for (Long transactionPing : transactionPings) {
-//        sum += Math.min(transactionPing, 500);
-//      }
-//      lastTPCRefresh = System.currentTimeMillis();
-//      transactionPingCache = sum / transactionPings.size();
-//    }
-//    return transactionPingCache;
-//  }
-
-
   public FeedbackQueue feedbackQueue() {
     return feedbackQueue;
   }
 
   public Map<Long, Queue<FeedbackRequest<?>>> transactionAppendMap() {
     return transactionOptionalAppendMap;
+  }
+
+  /**
+   * Marks a chunk packet as sent and returns the action that confirms the chunk after feedback.
+   * Replaced, unloaded, and world-invalidated loads cannot be confirmed by an older callback.
+   */
+  public Runnable pendingClientChunkLoad(int chunkX, int chunkZ) {
+    long chunkKey = clientChunkKey(chunkX, chunkZ);
+    long sequence;
+    do {
+      sequence = clientChunkSequence.incrementAndGet();
+    } while (sequence == LOADED_CLIENT_CHUNK);
+    clientChunkStates.put(chunkKey, sequence);
+    long expectedSequence = sequence;
+    return () -> clientChunkStates.replace(chunkKey, expectedSequence, LOADED_CLIENT_CHUNK);
+  }
+
+  public void unloadClientChunk(int chunkX, int chunkZ) {
+    clientChunkStates.remove(clientChunkKey(chunkX, chunkZ));
+  }
+
+  public void clearClientChunks() {
+    clientChunkStates.clear();
+  }
+
+  public boolean hasClientChunk(int chunkX, int chunkZ) {
+    return clientChunkStates.getOrDefault(clientChunkKey(chunkX, chunkZ), -1L) == LOADED_CLIENT_CHUNK;
+  }
+
+  public ClientChunkState clientChunkState(int chunkX, int chunkZ) {
+    Long state = clientChunkStates.get(clientChunkKey(chunkX, chunkZ));
+    if (state == null) {
+      return ClientChunkState.UNLOADED;
+    }
+    return state == LOADED_CLIENT_CHUNK ? ClientChunkState.LOADED : ClientChunkState.PENDING;
+  }
+
+  /**
+   * Returns a snapshot of feedback-confirmed chunks using Minecraft's packed chunk coordinate format.
+   */
+  public Set<Long> clientChunks() {
+    Set<Long> chunks = new HashSet<>();
+    clientChunkStates.forEach((chunk, state) -> {
+      if (state == LOADED_CLIENT_CHUNK) {
+        chunks.add(chunk);
+      }
+    });
+    return chunks;
+  }
+
+  public static long clientChunkKey(int chunkX, int chunkZ) {
+    return (chunkX & 0xFFFFFFFFL) | ((long) chunkZ << 32);
+  }
+
+  public static int clientChunkX(long chunkKey) {
+    return (int) chunkKey;
+  }
+
+  public static int clientChunkZ(long chunkKey) {
+    return (int) (chunkKey >> 32);
   }
 
   public Integer globalEntityIdFromLocal(Integer localEntityId) {
@@ -339,6 +380,11 @@ public final class ConnectionMetadata {
     return entitiesById.get(identifier);
   }
 
+  @Nullable
+  public Entity entityBy(Integer identifier) {
+    return entitiesById.get(identifier);
+  }
+
   public void enterEntity(Entity entity) {
     entitiesById.put(entity.entityId(), entity);
     entityIds.add(entity.entityId());
@@ -387,8 +433,40 @@ public final class ConnectionMetadata {
     this.tickedEntities = ticked;
   }
 
-  public Map<Long, Long> pingPackets() {
-    return remainingPingPacketTimestamps;
+  public void addPendingKeepAlive(long identifier, long sentAt) {
+    remainingPingPacketTimestamps.compute(identifier, (key, timestamps) -> {
+      Deque<Long> pending = timestamps;
+      if (pending == null) {
+        pending = new ConcurrentLinkedDeque<>();
+      }
+      pending.addLast(sentAt);
+      return pending;
+    });
+  }
+
+  public @Nullable Long pollPendingKeepAlive(long identifier) {
+    Long[] result = new Long[1];
+    remainingPingPacketTimestamps.computeIfPresent(identifier, (key, timestamps) -> {
+      result[0] = timestamps.pollFirst();
+      return timestamps.isEmpty() ? null : timestamps;
+    });
+    return result[0];
+  }
+
+  public void discardPendingKeepAlivesBefore(long cutoff) {
+    for (Long identifier : remainingPingPacketTimestamps.keySet()) {
+      remainingPingPacketTimestamps.computeIfPresent(identifier, (key, timestamps) -> {
+        Long first;
+        while ((first = timestamps.peekFirst()) != null && first < cutoff) {
+          timestamps.pollFirst();
+        }
+        return timestamps.isEmpty() ? null : timestamps;
+      });
+    }
+  }
+
+  public Set<Long> pendingKeepAliveIdentifiers() {
+    return new HashSet<>(remainingPingPacketTimestamps.keySet());
   }
 
   public List<Long> latencyDifferenceBalance() {

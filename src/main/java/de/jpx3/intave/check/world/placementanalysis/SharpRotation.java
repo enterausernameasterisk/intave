@@ -71,7 +71,7 @@ public final class SharpRotation extends PlayerCheckPart<PlacementAnalysis> {
 				Violation violation = Violation.builderFor(PlacementAnalysis.class)
 					.forPlayer(player).withMessage(COMMON_FLAG_MESSAGE).withDetails(details)
 					.appendFlags(DISPLAY_IN_ALL_VERBOSE_MODES)
-					.withCustomThreshold(PlacementAnalysis.legacyConfigurationLayout() ? "thresholds" : "cloud-thresholds.on-premise")
+					.withDefaultThreshold()
 					.withVL(sharpRotations > 10 ? 10 : 0).build();
 				Modules.violationProcessor().processViolation(violation);
 				place.setCancelled(true);

@@ -27,12 +27,6 @@ check:
     # Check for NoSlowdown cheats?
     enforce-item-slowdown: true
 
-    # Disable tick leniency for velocity packets
-    no-speculative-velocity: true
-
-    # Disable bundling of Ping packets with their respective attach packets
-    no-bundling: false
-
     on-detection:
       # Can help reduce item-related false positives
       reset-item-usage: true
@@ -57,7 +51,7 @@ check:
 
     # The maximum ticks a player is allowed to exist behind server tick, aka. "blink", -1 to disable
     # An aggressive setting would be 3 seconds = 60 ticks
-    blink-limit: -1
+    blink-limit: 5
 
     # Do you want to block pulse-blinking?
     block-pulse-blink: true
@@ -71,49 +65,41 @@ check:
   heuristics:
     enabled: true
 
-    # Sets the violation level increases for each classic check type.
+    # Sets the violation level increases for each heuristic type.
     # - The number must be an integer and -1 disables the checks
     # - 0 keeps the check activated and combat nerfers will be applied but no violations are added
-    classic:
-      # Attack Heuristics
-      attack-accuracy: 4
-      attack-required: 3
-      pre-attack: 4
+    # Attack Heuristics
+    attack-accuracy: 4
+    attack-required: 3
+    pre-attack: 4
 
-      # Rotation Heuristics
-      rotation-accuracy: 4
-      rotation-exact: 10
-      rotation-snap: 5
-      rotation-sensitivity: -1
-      rotation-reset: 3
+    # Rotation Heuristics
+    rotation-accuracy: 4
+    rotation-exact: 10
+    rotation-snap: 5
+    rotation-sensitivity: -1
+    rotation-reset: 3
 
-      # Other
-      inventory-rotations: 2
-      blocking: 0
-      no-swing: 0
-      swing-order: 3
-      sprint-toggles: 2 # prevents spamming sprint packets to apply more knockback on targets
-      tool-switch: 3 # prevents slot switches while breaking blocks
+    # Other
+    inventory-rotations: 2
+    blocking: 0
+    no-swing: 0
+    swing-order: 3
+    sprint-toggles: 2 # prevents spamming sprint packets to apply more knockback on targets
+    tool-switch: 3 # prevents slot switches while breaking blocks
 
-      thresholds:
-        20:
-          - "intave internals storelog {player} {check} {vl}"
-          - "intave internals sendnotify &e{player}&7 is attacking suspiciously #1"
+    thresholds:
+      20:
+        - "intave internals storelog {player} {check} {vl}"
+        - "intave internals sendnotify &c{player}&7/{trust-color}&7 is acting computer-like #1"
 
-        40:
-          - "intave internals sendnotify &e{player}&7 is attacking suspiciously #2"
+      40:
+        - "intave internals sendnotify &c{player}&7/{trust-color}&7 is acting computer-like #2"
 
-        50:
-          - "intave internals storelog {player} {check} {vl}"
-          - "intave internals sendnotify &c{player}&7/{trust-color}&7 has been kicked for attacking suspiciously (on-premise classic heuristics)"
-          - $kick$
-
-    cloud:
-      thresholds:
-        50:
-          - "intave internals storelog {player} {check} {vl}"
-          - "intave internals sendnotify &c{player}&7/{trust-color}&7 has been removed for attacking suspiciously (cloud heuristics)"
-          - $ban$
+      50:
+        - "intave internals storelog {player} {check} {vl}"
+        - "intave internals sendnotify &c{player}&7/{trust-color}&7 has been kicked for acting computer-like (on-premise classic heuristics)"
+        - $kick$
 
   attackraytrace:
     enabled: true
@@ -188,20 +174,11 @@ check:
     # 360 degrees = 1 full rotation
     rotation-limit: 3000
 
-    cloud-thresholds:
-      # Executed if a player fails on-premise analysis
-      on-premise:
-        200:
-          - "intave internals storelog {player} {check} {vl}"
-          - "intave internals sendnotify &c{player}&7/{trust-color}&7 has been removed for placing blocks suspiciously (scaffold)"
-          - $ban$
-
-      # Executed if a player fails cloud analysis
-      cloud:
-        200:
-          - "intave internals storelog {player} {check} {vl}"
-          - "intave internals sendnotify &c{player}&7/{trust-color}&7 has been removed for placing blocks suspiciously (cloud heuristics)"
-          - $ban$
+    thresholds:
+      200:
+        - "intave internals storelog {player} {check} {vl}"
+        - "intave internals sendnotify &c{player}&7/{trust-color}&7 has been removed for placing blocks suspiciously (scaffold)"
+        - $ban$
 
   inventoryclickanalysis:
     enabled: true
@@ -213,19 +190,46 @@ check:
         - "intave internals sendnotify &c{player}&7/{trust-color}&7 has been removed for clicking suspiciously on items"
         - $kick$
 
-cloud:
-  # Should Intave connect to the cloud?
-  enabled: false
+  cloud:
+    enabled: true
 
-  features:
-    # Should Intave use the cloud to store metadata?
-    cloud-storage: true
-    # Should Intave use the cloud to acquire trustfactors?
-    cloud-trustfactor: true
-    # Should Intave use the cloud for additional cheat detection?
-    cloud-heuristics: true
-    # Should Intave use the cloud for log storage?
-    cloud-logs: true
+    # Cloud token
+    token: "ct_EXAMPLE-TOKEN"
+
+    # Enable/disable in the dashboard
+    detection:
+      thresholds:
+        100:
+          - "intave internals storelog {player} {check} {vl}"
+          - "intave internals sendnotify &c{player}&7/{trust-color}&7 has been removed for acting computer-like (cloud detection)"
+          - $ban$
+
+    # Enable/disable in the dashboard
+    fingerprinting:
+      kick-message: "&cYou closely match a recently banned player."
+
+    # Enable/disable in the dashboard
+    anti-baritone:
+      kick-message: "&cYou may not use automation scripts."
+
+    # Enable/disable in the dashboard
+    anti-vpn:
+      kick-message: "&cYou may not enter with a VPN or proxy."
+
+    # Enable/disable in the dashboard
+    skin-profanity:
+      kick-message: "&cPlease change your skin, as it contains inappropriate content."
+
+    # Enable/disable in the dashboard
+    chat-profanity:
+      # BLOCK, SHADOW_BLOCK, or NONE
+      filter-mode: SHADOW_BLOCK
+
+      block-message: "&cAvoid inappropriate language."
+
+      spam-message: "&cDon't spam."
+
+    privacy-mode: BEST_DETECTION
 
 storage:
   # Set to ignore the "intave internals storelog"    and auto-store suggested violations instead
@@ -238,9 +242,6 @@ blacklist:
   apply: true
   message-in-chat: false
   message: "&cYou are on an anti-cheat blacklist and can't join this server"
-
-proxy:
-  enable: false
 
 clientwarning:
   enable: true
@@ -306,17 +307,10 @@ logging:
   command-execution: true
   # Show fault kicks in the console?
   fault-kicks: true
-  # Dump player log ids in the console?
-  cloud-log-ids: true
   # Verbose mode (ALL, MITIGATED, SELECTED)
   verbose-mode: MITIGATED
-
   # debugging purposes, do not activate
   #feedback-dump: false
-
-analytics:
-  errorReporting: true
-  usageReporting: true
 
 layout:
   verbose: "{prefix} &c{player}&7/{trust-color}&7 {message} {details} (+{vladded} -> {vl})"

@@ -1,3 +1,14 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.trustfactor;
 
 import de.jpx3.intave.IntaveControl;
@@ -7,7 +18,6 @@ import de.jpx3.intave.access.player.trust.DefaultForwardingPermissionTrustFactor
 import de.jpx3.intave.access.player.trust.TrustFactor;
 import de.jpx3.intave.access.player.trust.TrustFactorResolver;
 import de.jpx3.intave.annotate.HighOrderService;
-import de.jpx3.intave.connect.cloud.LogTransmittor;
 import de.jpx3.intave.diagnostic.ConsoleOutput;
 import de.jpx3.intave.diagnostic.message.DebugBroadcast;
 import de.jpx3.intave.diagnostic.message.MessageCategory;
@@ -127,8 +137,6 @@ public final class TrustFactorService implements BukkitEventSubscriber {
       IntaveLogger.logger().info(message2);
     }
 
-    LogTransmittor logTransmittor = IntavePlugin.singletonInstance().logTransmittor();
-    logTransmittor.addPlayerLog(player, "(TRUST) " + message);
   }
 
   public int trustFactorSetting(String key, Player player) {

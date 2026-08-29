@@ -1,13 +1,24 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.command.stages;
 
+import ac.intave.samples.event.AttackEvent;
+import ac.intave.samples.event.EntityRemoveEvent;
+import ac.intave.samples.event.EntitySpawnEvent;
+import ac.intave.samples.event.EventSink;
 import de.jpx3.intave.command.CommandStage;
 import de.jpx3.intave.command.SubCommand;
 import de.jpx3.intave.module.Modules;
 import de.jpx3.intave.module.nayoro.Nayoro;
-import de.jpx3.intave.module.nayoro.event.AttackEvent;
-import de.jpx3.intave.module.nayoro.event.EntityRemoveEvent;
-import de.jpx3.intave.module.nayoro.event.EntitySpawnEvent;
-import de.jpx3.intave.module.nayoro.event.sink.EventSink;
 import de.jpx3.intave.user.User;
 import org.bukkit.ChatColor;
 
@@ -28,7 +39,7 @@ public final class SampleStage extends CommandStage {
     Nayoro nayoro = Modules.nayoro();
     user.player().sendMessage(ChatColor.GRAY + "Active sinks:");
     for (EventSink eventSink : nayoro.sinksOf(user)) {
-      user.player().sendMessage(ChatColor.GRAY + " - " + eventSink.name());
+      user.player().sendMessage(ChatColor.GRAY + " - " + eventSink.getClass().getSimpleName());
     }
   }
 

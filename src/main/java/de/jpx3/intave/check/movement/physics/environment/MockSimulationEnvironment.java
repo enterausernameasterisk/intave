@@ -12,6 +12,8 @@
 package de.jpx3.intave.check.movement.physics.environment;
 
 import de.jpx3.intave.block.fluid.Fluid;
+import de.jpx3.intave.block.tick.ShulkerBox;
+import de.jpx3.intave.block.tick.piston.PistonSlimeMovement;
 import de.jpx3.intave.check.movement.physics.config.MovementConfiguration;
 import de.jpx3.intave.check.movement.physics.simulator.BoatSimulator.Status;
 import de.jpx3.intave.check.movement.physics.simulator.Simulation;
@@ -41,6 +43,8 @@ public final class MockSimulationEnvironment implements SimulationEnvironment {
   private double motionX, motionY, motionZ;
   private double baseMotionX, baseMotionY, baseMotionZ;
   private List<PostTickSimulation> postTickSimulations = Collections.emptyList();
+  private List<PistonSlimeMovement> pistonSlimeMovements = Collections.emptyList();
+  private Map<BlockPosition, ShulkerBox> shulkerBoxes = Collections.emptyMap();
   private double jumpHeight;
   private float height = 1.8F;
   private float width = 0.6F;
@@ -420,6 +424,30 @@ public final class MockSimulationEnvironment implements SimulationEnvironment {
   @Override
   public void setPostTickMotionCandidates(@NotNull List<PostTickSimulation> postTickSimulations) {
     this.postTickSimulations = new ArrayList<>(postTickSimulations);
+  }
+
+  @Override
+  public List<PistonSlimeMovement> pistonSlimeMovements() {
+    return pistonSlimeMovements.isEmpty()
+      ? Collections.emptyList()
+      : Collections.unmodifiableList(pistonSlimeMovements);
+  }
+
+  @Override
+  public void setPistonSlimeMovements(@NotNull List<PistonSlimeMovement> pistonSlimeMovements) {
+    this.pistonSlimeMovements = new ArrayList<>(pistonSlimeMovements);
+  }
+
+  @Override
+  public Map<BlockPosition, ShulkerBox> shulkerBoxes() {
+    return shulkerBoxes.isEmpty()
+      ? Collections.emptyMap()
+      : Collections.unmodifiableMap(shulkerBoxes);
+  }
+
+  @Override
+  public void setShulkerBoxes(@NotNull Map<BlockPosition, ShulkerBox> shulkerBoxes) {
+    this.shulkerBoxes = new LinkedHashMap<>(shulkerBoxes);
   }
 
   @Override

@@ -17,7 +17,9 @@ import io.netty.buffer.ByteBuf;
 import org.jetbrains.annotations.NotNull;
 
 public enum ActionType {
-	RECEIVE_VELOCITY
+	RECEIVE_VELOCITY,
+	PISTON_SLIME,
+	SHULKER_BOX
 
 	;
 	public final static StreamCodec<ByteBuf, ByteBuf, @NotNull ActionType> STREAM_CODEC = ByteBufStreamCodecs.STRING.beforeAndAfter(

@@ -31,7 +31,6 @@ import de.jpx3.intave.math.MathHelper;
 import de.jpx3.intave.module.Modules;
 import de.jpx3.intave.module.feedback.FeedbackTests;
 import de.jpx3.intave.module.linker.bukkit.BukkitEventSubscription;
-import de.jpx3.intave.module.player.StorageTests;
 import de.jpx3.intave.packet.reader.ReaderTests;
 import de.jpx3.intave.resource.Resource;
 import de.jpx3.intave.resource.Resources;
@@ -188,7 +187,6 @@ public final class IntegrationTestService implements EventProcessor {
       performTest(BlockShapeDrillTests.class);
       performTest(BlockShapePipelineTests.class);
       performTest(EntitySizeTests.class);
-      performTest(StorageTests.class);
       performTest(FeedbackTests.class);
       performTest(ReaderTests.class);
       performTest(FluidTests.class);

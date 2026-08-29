@@ -7,6 +7,8 @@ rejoin-delay -> rejoin.delay
 prefix -> layout.prefix
 verbose -> layout.verbose
 notify -> layout.notify
+cloud-token -> check.cloud.token
+privacy -> check.cloud.privacy-mode
 
 +Placeholders
 kick-commands -> $kick$

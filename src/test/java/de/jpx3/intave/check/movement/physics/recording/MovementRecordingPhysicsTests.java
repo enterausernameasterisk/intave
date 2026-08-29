@@ -30,11 +30,15 @@ import de.jpx3.intave.check.movement.physics.simulator.Simulation;
 import de.jpx3.intave.check.movement.physics.simulator.Simulator;
 import de.jpx3.intave.check.movement.physics.simulator.Simulators;
 import de.jpx3.intave.check.movement.physics.update.MotionSetUpdate;
+import de.jpx3.intave.check.movement.physics.update.PistonActionUpdate;
+import de.jpx3.intave.check.movement.physics.update.ShulkerBoxActionUpdate;
 import de.jpx3.intave.module.test.record.MoveFrame;
 import de.jpx3.intave.module.test.record.MovementFrameState;
 import de.jpx3.intave.module.test.record.MovementRecording;
 import de.jpx3.intave.module.test.record.action.Action;
+import de.jpx3.intave.module.test.record.action.PistonSlimeAction;
 import de.jpx3.intave.module.test.record.action.ReceiveVelocity;
+import de.jpx3.intave.module.test.record.action.ShulkerBoxAction;
 import de.jpx3.intave.player.attribute.Attribute;
 import de.jpx3.intave.player.collider.Colliders;
 import de.jpx3.intave.resource.Resources;
@@ -292,7 +296,7 @@ final class MovementRecordingPhysicsTests {
 			metadata.setPose(firstFrame.physicalPose());
 		}
 
-		ThreeTickSimulationSearch processor = new ThreeTickSimulationSearch(false, false);
+		ThreeTickSimulationSearch processor = new ThreeTickSimulationSearch(false);
 		List<String> lastMessages = new LinkedList<>();
 
 		for (int tick = firstPositionFrame + 1; tick < frames.size(); tick++) {
@@ -353,7 +357,7 @@ final class MovementRecordingPhysicsTests {
 				: 0;
 			Simulation simulation;
 			if (!hasPerFramePhysicalState) {
-				simulation = processor.greedyFullTickSearch(user, searchEnvironment, simulator);
+				simulation = processor.greedyFullTickSearch(user, searchEnvironment, simulator).simulation();
 			} else if (hasMovement) {
 				simulation = processor.exactFlyingPacketSearch(
 					user, searchEnvironment, simulator, precedingFlyingPackets
@@ -367,7 +371,7 @@ final class MovementRecordingPhysicsTests {
 				|| simulation.positionDifference(metadata.position()) > DIVERGED_MOTION_DISTANCE)) {
 				Simulation genericSimulation = processor.greedyFullTickSearch(
 					user, searchEnvironment, simulator
-				);
+				).simulation();
 				if (simulation == Simulation.invalid()
 					|| genericSimulation.positionDifference(metadata.position())
 					< simulation.positionDifference(metadata.position())) {
@@ -377,7 +381,7 @@ final class MovementRecordingPhysicsTests {
 			} else if (simulation == Simulation.invalid()) {
 				simulation = processor.greedyFullTickSearch(
 					user, searchEnvironment, simulator
-				);
+				).simulation();
 			}
 			if (!hasMovement) {
 				finishPositionlessTick(
@@ -397,13 +401,30 @@ final class MovementRecordingPhysicsTests {
 
 			if (loss > allowedLoss && tick > 16) {
 				System.out.println("\r" + "[FAILED] " + resourcePath + " (tick " + tick + ")");
+				String failureReportLink = null;
+				try {
+					Path report = PtrBranchingVisualizationTest.writeFailureReport(
+						resourcePath,
+						recording,
+						tick,
+						simulation,
+						metadata.sentOffsetMotion()
+					);
+					failureReportLink = PtrBranchingVisualizationTest.printReportLink(report, tick);
+				} catch (Exception | AssertionError reportFailure) {
+					System.out.println(
+						"[REPORT] Unable to write tick " + tick + " report: "
+							+ reportFailure.getMessage()
+					);
+				}
 				printFailureReport(
 					resourcePath, recording, frames, tick, loss, allowedLoss,
 					lastMessages, blockCache, user, metadata, simulation, processor, simulator
 				);
 				fail("Movement diverged at tick " + tick + ": loss "
 					+ formatDiagnosticDouble(loss) + " exceeds "
-					+ formatDiagnosticDouble(allowedLoss));
+					+ formatDiagnosticDouble(allowedLoss)
+					+ (failureReportLink == null ? "" : "\nPTR report: " + failureReportLink));
 			}
 
 			System.out.print("\r" + output);
@@ -1089,6 +1110,30 @@ final class MovementRecordingPhysicsTests {
 					metadata.activeTick(EXTERNAL_VELOCITY);
 					metadata.activeTick(RECEIVED_VELOCITY_PACKET);
 					metadata.activeTick(VELOCITY);
+				}
+			} else if (action instanceof PistonSlimeAction piston) {
+				if (piston.tickRange().start() == tick) {
+					long duration = piston.tickRange().end() - piston.tickRange().start();
+					if (duration <= 0) {
+						throw new IllegalStateException("Invalid piston tick range: " + piston.tickRange());
+					}
+					PistonActionUpdate update = PistonActionUpdate.openEnded(
+						piston.direction(), piston.slimeSources(), metadata
+					);
+					update.setRunNotAfter(metadata.currentTick() + duration - 1);
+					metadata.queueTickAmbiguousUpdate(update);
+				}
+			} else if (action instanceof ShulkerBoxAction shulker) {
+				if (shulker.tickRange().start() == tick) {
+					long duration = shulker.tickRange().end() - shulker.tickRange().start();
+					if (duration <= 0) {
+						throw new IllegalStateException("Invalid shulker-box tick range: " + shulker.tickRange());
+					}
+					ShulkerBoxActionUpdate update = ShulkerBoxActionUpdate.openEnded(
+						shulker.position(), shulker.direction(), shulker.opening(), metadata
+					);
+					update.setRunNotAfter(metadata.currentTick() + duration - 1);
+					metadata.queueTickAmbiguousUpdate(update);
 				}
 			}
 		}

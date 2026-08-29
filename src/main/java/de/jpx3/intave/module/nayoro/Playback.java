@@ -1,27 +1,48 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.module.nayoro;
 
+import ac.intave.samples.event.*;
+import ac.intave.samples.serial.JsonReader;
 import de.jpx3.intave.module.Modules;
-import de.jpx3.intave.module.nayoro.detection.PrintStreamDetectionSubscription;
-import de.jpx3.intave.module.nayoro.event.*;
 import de.jpx3.intave.share.Position;
 
-import java.io.DataInputStream;
 import java.io.IOException;
-import java.util.*;
+import java.io.InputStream;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 
 abstract class Playback extends SinkEnvironment {
-  private final DataInputStream dataInputStream;
+  private final JsonReader recordingReader;
   private final Map<String, Boolean> properties = new HashMap<>();
-  private final PlaybackPlayerContainer playbackPlayer = new PlaybackPlayerContainer(this, new PrintStreamDetectionSubscription(System.out));
+  private final PlaybackPlayerContainer playbackPlayer = new PlaybackPlayerContainer(this);
   private final Map<Integer, Position> entityPositions = new HashMap<>();
   private final Map<Integer, Double> entityMovementThisTick = new HashMap<>();
   private int movementRefreshTicks = 0;
   private final Map<Integer, Boolean> inSight = new HashMap<>();
   private final Set<Integer> entityIds = new HashSet<>();
-  private boolean readHeader = false;
 
-  public Playback(DataInputStream stream) {
-    this.dataInputStream = stream;
+  public Playback(InputStream stream) {
+    try {
+      this.recordingReader = new JsonReader(stream);
+      Event firstEvent = recordingReader.nextEvent();
+      if (!(firstEvent instanceof HeaderEvent)) {
+        throw new IOException("Nayoro recording does not start with a header event");
+      }
+    } catch (IOException exception) {
+      throw new IllegalArgumentException("Unable to open Nayoro recording", exception);
+    }
   }
 
   public abstract void start();
@@ -30,30 +51,17 @@ abstract class Playback extends SinkEnvironment {
 
   protected Event nextEvent() {
     try {
-      if (!readHeader) {
-        readHeader = true;
-        String headerData = dataInputStream.readUTF();
-        if (!"INTAVE/SAMPLE".equalsIgnoreCase(headerData)) {
-          throw new RuntimeException("Invalid header data");
-        }
-        String license = dataInputStream.readUTF();
-//        String id = dataInputStream.readUTF();
-        String id = new UUID(dataInputStream.readLong(), dataInputStream.readLong()).toString();
-        long millis = dataInputStream.readLong();
-      }
-      short offset = dataInputStream.readShort();
-      int packetId = dataInputStream.readByte();
-      if (offset == 0 && packetId == -1) {
-        return null;
-      }
-      Event event = EventRegistry.eventOf(packetId);
-      event.deserialize(this, dataInputStream);
-      event.withOffset(offset);
-//      System.out.println("Read event: " + event.getClass().getSimpleName() + " with offset " + offset);
-      return event;
+      return recordingReader.nextEvent();
     } catch (IOException exception) {
-      exception.printStackTrace();
-      return null;
+      throw new IllegalStateException("Unable to read Nayoro event", exception);
+    }
+  }
+
+  protected void closeRecording() {
+    try {
+      recordingReader.close();
+    } catch (IOException exception) {
+      throw new IllegalStateException("Unable to close Nayoro recording", exception);
     }
   }
 
@@ -76,25 +84,21 @@ abstract class Playback extends SinkEnvironment {
     if (position == null) {
       position = Position.mutableEmpty();
     }
+    Position recordedPosition = SampleTypes.position(event.position());
     double distance = 0.0;
     if (event.applyX()) {
-      distance += Math.abs(position.getX() - event.x());
-      position.setX(event.x());
-    } else {
-      event.setX(position.getX());
+      distance += Math.abs(position.getX() - recordedPosition.getX());
+      position.setX(recordedPosition.getX());
     }
     if (event.applyY()) {
-      distance += Math.abs(position.getY() - event.y());
-      position.setY(event.y());
-    } else {
-      event.setY(position.getY());
+      distance += Math.abs(position.getY() - recordedPosition.getY());
+      position.setY(recordedPosition.getY());
     }
     if (event.applyZ()) {
-      distance += Math.abs(position.getZ() - event.z());
-      position.setZ(event.z());
-    } else {
-      event.setZ(position.getZ());
+      distance += Math.abs(position.getZ() - recordedPosition.getZ());
+      position.setZ(recordedPosition.getZ());
     }
+    event.setPosition(SampleTypes.position(position.immutable()));
     distance = Math.min(distance, 1);
     entityPositions.put(entityId, position);
     double finalDistance = distance;

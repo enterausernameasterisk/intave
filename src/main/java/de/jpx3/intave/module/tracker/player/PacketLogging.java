@@ -141,15 +141,10 @@ public class PacketLogging extends Module {
     if (target == null) {
       return;
     }
-    boolean requestedMovementDebugToConsole = System.currentTimeMillis() - target.meta().violationLevel().lastMovementDebugRequest < 10_000;
     PrintStream stream;
     try {
       stream = packetLogStreams.get(target.player().getUniqueId());
       if (stream == null) {
-        if (requestedMovementDebugToConsole) {
-          String message = messageSupplier.get();
-          plugin.logTransmittor().addPlayerLog(target.player(), "MOVE_DEBUG> " + message);
-        }
         return;
       }
     } catch (Exception exception) {

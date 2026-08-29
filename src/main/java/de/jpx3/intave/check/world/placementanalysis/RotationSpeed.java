@@ -117,7 +117,6 @@ public final class RotationSpeed extends PlayerCheckPart<PlacementAnalysis> {
 					.withMessage(COMMON_FLAG_MESSAGE)
 					.withDetails("high rotation activity while placing blocks")
 					.appendFlags(DISPLAY_IN_ALL_VERBOSE_MODES)
-					.withCustomThreshold(PlacementAnalysis.legacyConfigurationLayout() ? "thresholds" : "cloud-thresholds.on-premise")
 					.withVL(10).build();
 				ViolationContext violationContext = Modules.violationProcessor().processViolation(violation);
 				// Consume this evidence after reporting it. Reusing the same rotation

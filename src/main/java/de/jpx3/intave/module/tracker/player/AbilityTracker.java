@@ -1,3 +1,14 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.module.tracker.player;
 
 import com.comphenix.protocol.events.PacketEvent;
@@ -77,7 +88,13 @@ public final class AbilityTracker extends Module {
           Location position = moovement.verifiedLocation().clone();
           Player player = user.player();
           position.setWorld(player.getWorld());
-          player.teleport(position);
+          Modules.tracker().packetLogging().logSystemMessage(user, () ->
+            "TELEPORT ACTION source=FLIGHT_DISALLOW_TIMEOUT target=" + position
+          );
+          boolean teleported = player.teleport(position);
+          Modules.tracker().packetLogging().logSystemMessage(user, () ->
+            "TELEPORT ACTION RESULT source=FLIGHT_DISALLOW_TIMEOUT accepted=" + teleported
+          );
           moovement.criticalFlyingBlockMovementStacks++;
           if (user.receives(MessageChannel.DEBUG_TELEPORT)) {
             player.sendMessage(IntavePlugin.prefix() + "Teleport to " + player.getLocation().getBlockX() + " " + player.getLocation().getBlockY() + " " + player.getLocation().getBlockZ() + " " + " as " + ChatColor.RED + " not responding to critical flight disallow");
@@ -127,7 +144,14 @@ public final class AbilityTracker extends Module {
       }
     } else if (movementData.criticalFlyingBlockMovementStacks > 0 && movementData.criticalTeleportRateLimiter.tryAcquire()) {
       Synchronizer.synchronize(() -> {
-        player.teleport(player.getLocation());
+        Location target = player.getLocation();
+        Modules.tracker().packetLogging().logSystemMessage(user, () ->
+          "TELEPORT ACTION source=FLIGHT_DISALLOW_MOVEMENT_BLOCK target=" + target
+        );
+        boolean teleported = player.teleport(target);
+        Modules.tracker().packetLogging().logSystemMessage(user, () ->
+          "TELEPORT ACTION RESULT source=FLIGHT_DISALLOW_MOVEMENT_BLOCK accepted=" + teleported
+        );
       });
       if (user.receives(MessageChannel.DEBUG_TELEPORT)) {
         player.sendMessage(IntavePlugin.prefix() + "Teleport to " + player.getLocation().getBlockX() + " " + player.getLocation().getBlockY() + " " + player.getLocation().getBlockZ() + " " + " for " + ChatColor.RED + " critical flying disallow protection (movement block)");

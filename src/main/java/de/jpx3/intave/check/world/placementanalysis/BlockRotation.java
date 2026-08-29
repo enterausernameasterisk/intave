@@ -92,7 +92,7 @@ public final class BlockRotation extends PlayerCheckPart<PlacementAnalysis> {
 				Violation violation = Violation.builderFor(PlacementAnalysis.class)
 					.forPlayer(player).withMessage(COMMON_FLAG_MESSAGE).withDetails(details)
 					.appendFlags(DISPLAY_IN_ALL_VERBOSE_MODES)
-					.withCustomThreshold(PlacementAnalysis.legacyConfigurationLayout() ? "thresholds" : "cloud-thresholds.on-premise")
+					.withDefaultThreshold()
 					.withVL(10).build();
 				Modules.violationProcessor().processViolation(violation);
 			}

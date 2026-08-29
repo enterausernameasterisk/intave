@@ -20,10 +20,10 @@ import de.jpx3.intave.block.variant.BlockVariant;
 import de.jpx3.intave.check.movement.physics.environment.Pose;
 import de.jpx3.intave.codec.ByteBufStreamCodecs;
 import de.jpx3.intave.codec.StreamCodec;
-import de.jpx3.intave.module.test.record.MaterialVariantStore;
-import de.jpx3.intave.module.test.record.MoveFrame;
-import de.jpx3.intave.module.test.record.MovementRecording;
+import de.jpx3.intave.module.test.record.*;
 import de.jpx3.intave.module.test.record.action.Action;
+import de.jpx3.intave.module.test.record.action.PistonSlimeAction;
+import de.jpx3.intave.module.test.record.action.ShulkerBoxAction;
 import de.jpx3.intave.player.attribute.Attribute;
 import de.jpx3.intave.player.attribute.AttributeModifier;
 import de.jpx3.intave.resource.Resource;
@@ -37,10 +37,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 import java.util.zip.DeflaterOutputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -48,6 +45,7 @@ import static org.junit.jupiter.api.Assertions.*;
 final class MovementRecordingSerializerTest {
 	private static final StreamCodec<ByteBuf, ByteBuf, Position> NULLABLE_POSITION_CODEC = Position.STREAM_CODEC.nullable(ByteBufStreamCodecs.BOOLEAN);
 	private static final StreamCodec<ByteBuf, ByteBuf, Rotation> NULLABLE_ROTATION_CODEC = Rotation.STREAM_CODEC.nullable(ByteBufStreamCodecs.BOOLEAN);
+	private static final StreamCodec<ByteBuf, ByteBuf, Pose> NULLABLE_POSE_CODEC = ByteBufStreamCodecs.STRING.beforeAndAfter(Pose::valueOf, Pose::name).nullable(ByteBufStreamCodecs.BOOLEAN);
 	private static final StreamCodec<ByteBuf, ByteBuf, Map<BlockPosition, MaterialVariantStore>> BLOCKS_CODEC = ByteBufStreamCodecs.mapCodec(BlockPosition.STREAM_CODEC, MaterialVariantStore.STREAM_CODEC);
 	private static final StreamCodec<ByteBuf, ByteBuf, MoveFrame> UNVERSIONED_FRAME_CODEC = StreamCodec.of((buffer, frame) -> {
 		NULLABLE_POSITION_CODEC.encode(buffer, frame.moveTo());
@@ -58,9 +56,24 @@ final class MovementRecordingSerializerTest {
 		throw new UnsupportedOperationException("This codec is used for encoding test payloads only");
 	});
 	private static final StreamCodec<ByteBuf, ByteBuf, List<MoveFrame>> LEGACY_FRAMES_CODEC = ByteBufStreamCodecs.listCodecOf(UNVERSIONED_FRAME_CODEC);
+	private static final StreamCodec<ByteBuf, ByteBuf, List<MoveFrame>> VERSION_2_FRAMES_CODEC = StreamCodec.of((buffer, frames) -> {
+		ByteBufStreamCodecs.INTEGER.encode(buffer, Integer.MIN_VALUE);
+		ByteBufStreamCodecs.INTEGER.encode(buffer, 2);
+		ByteBufStreamCodecs.INTEGER.encode(buffer, frames.size());
+		for (MoveFrame frame : frames) {
+			UNVERSIONED_FRAME_CODEC.encode(buffer, frame);
+			ByteBufStreamCodecs.BOOLEAN.encode(buffer, frame.gliding());
+			NULLABLE_POSE_CODEC.encode(buffer, frame.physicalPose());
+		}
+	}, _ -> {
+		throw new UnsupportedOperationException("This codec is used for encoding test payloads only");
+	});
 	private static final StreamCodec<ByteBuf, ByteBuf, Map<Material, Map<Integer, BlockShape>>> COLLISION_SHAPES_CODEC = ByteBufStreamCodecs.mapCodec(ByteBufStreamCodecs.MATERIAL, ByteBufStreamCodecs.mapCodec(ByteBufStreamCodecs.INTEGER, BlockShape.STREAM_CODEC));
 	private static final StreamCodec<ByteBuf, ByteBuf, Map<Material, Map<Integer, Fluid>>> FLUIDS_CODEC = ByteBufStreamCodecs.mapCodec(ByteBufStreamCodecs.MATERIAL, ByteBufStreamCodecs.mapCodec(ByteBufStreamCodecs.INTEGER, Fluid.STREAM_CODEC));
 	private static final StreamCodec<ByteBuf, ByteBuf, MovementRecording> FRAMES_ONLY_SMART_CODEC = ByteBufStreamCodecs.<MovementRecording>smartCodec(codec -> codec.field("frames", LEGACY_FRAMES_CODEC, MovementRecording::frames).field("internalId", ByteBufStreamCodecs.UUID, MovementRecording::internalId).field("collisionShapes", COLLISION_SHAPES_CODEC, MovementRecording::collisionShapes).field("fluids", FLUIDS_CODEC, MovementRecording::fluids), _ -> {
+		throw new UnsupportedOperationException("This codec is used for encoding test payloads only");
+	});
+	private static final StreamCodec<ByteBuf, ByteBuf, MovementRecording> VERSION_2_SMART_CODEC = ByteBufStreamCodecs.<MovementRecording>smartCodec(codec -> codec.field("frames", VERSION_2_FRAMES_CODEC, MovementRecording::frames).field("internalId", ByteBufStreamCodecs.UUID, MovementRecording::internalId).field("collisionShapes", COLLISION_SHAPES_CODEC, MovementRecording::collisionShapes).field("fluids", FLUIDS_CODEC, MovementRecording::fluids), _ -> {
 		throw new UnsupportedOperationException("This codec is used for encoding test payloads only");
 	});
 	private static final StreamCodec<ByteBuf, ByteBuf, MovementRecording> FUTURE_SMART_CODEC = ByteBufStreamCodecs.<MovementRecording>smartCodec(codec -> codec.field("internalId", ByteBufStreamCodecs.UUID, MovementRecording::internalId).field("frames", LEGACY_FRAMES_CODEC, MovementRecording::frames).field("collisionShapes", COLLISION_SHAPES_CODEC, MovementRecording::collisionShapes).field("fluids", FLUIDS_CODEC, MovementRecording::fluids).field("format", ByteBufStreamCodecs.INTEGER, _ -> 2), _ -> {
@@ -123,6 +136,96 @@ final class MovementRecordingSerializerTest {
 	}
 
 	@Test
+	void serializesMovementRelevantFrameState() {
+		MovementRecording recording = MovementRecording.create();
+		MovementFrameState.ItemState elytra = new MovementFrameState.ItemState(
+			Material.ELYTRA, 1, 17, Map.of()
+		);
+		MovementFrameState state = new MovementFrameState(
+			new MovementFrameState.AbilityState(true, true, false, 0.08F, "CREATIVE"),
+			new MovementFrameState.EffectState(
+				2, 80, 1, 40, 3, 20,
+				List.of(new MovementFrameState.EffectInstance("LEVITATION", 30, 2, false))
+			),
+			new MovementFrameState.InventoryState(
+				List.of(new MovementFrameState.ItemState(Material.BOW, 1, 0, Map.of())),
+				Arrays.asList(null, null, elytra, null),
+				null, 0, true, 7, 0, 2, false, Material.BOW,
+				false, false, Material.AIR, true, false
+			),
+			3, 2,
+			new MovementFrameState.EntityState(
+				42, true, "Boat", 1, false, 10,
+				1.375F, 0.5625F, false, true, 4.0, 64.0, 8.0
+			),
+			List.of(new MovementFrameState.EntityState(
+				43, true, "Zombie", 54, true, 9,
+				0.6F, 1.95F, false, true, 4.2, 64.0, 8.1
+			)),
+			"IN_WATER", "IN_AIR", 0.8F, 64.7D,
+			2, 0, 4
+		);
+		recording.insertFrame(
+			BoundingBox.empty(), Input.none(), Position.immutableEmpty(), Rotation.zero(),
+			new MockFullBlockStaticPlane(), Map.of(), true, Pose.FALL_FLYING, state
+		);
+
+		ByteBuf buffer = Unpooled.buffer();
+		try {
+			MovementRecording.STREAM_CODEC.encode(buffer, recording);
+			MovementRecording decoded = MovementRecording.STREAM_CODEC.decode(buffer);
+
+			assertEquals(state, decoded.frames().get(0).movementState());
+			assertEquals(recording, decoded);
+		} finally {
+			buffer.release();
+		}
+	}
+
+	@Test
+	void serializesPistonSlimeActions() {
+		MovementRecording recording = MovementRecording.create();
+		PistonSlimeAction action = new PistonSlimeAction(
+			Direction.UP,
+			List.of(new BlockPosition(-214, 65, 220)),
+			TickRange.betweenInclusive(65, 66)
+		);
+		recording.insertAction(action);
+
+		ByteBuf buffer = Unpooled.buffer();
+		try {
+			MovementRecording.STREAM_CODEC.encode(buffer, recording);
+			MovementRecording decoded = MovementRecording.STREAM_CODEC.decode(buffer);
+
+			assertEquals(List.of(action), decoded.actions());
+		} finally {
+			buffer.release();
+		}
+	}
+
+	@Test
+	void serializesShulkerBoxActions() {
+		MovementRecording recording = MovementRecording.create();
+		ShulkerBoxAction action = new ShulkerBoxAction(
+			new BlockPosition(-214, 65, 220),
+			Direction.EAST,
+			true,
+			TickRange.betweenInclusive(65, 66)
+		);
+		recording.insertAction(action);
+
+		ByteBuf buffer = Unpooled.buffer();
+		try {
+			MovementRecording.STREAM_CODEC.encode(buffer, recording);
+			MovementRecording decoded = MovementRecording.STREAM_CODEC.decode(buffer);
+
+			assertEquals(List.of(action), decoded.actions());
+		} finally {
+			buffer.release();
+		}
+	}
+
+	@Test
 	void serializesBlockVariantProperties() {
 		MovementRecording recording = MovementRecording.create();
 		BlockVariant variant = testVariant(7, Map.of("drag", true, "distance", 3, "facing", "north"));
@@ -145,6 +248,23 @@ final class MovementRecordingSerializerTest {
 	}
 
 	@Test
+	void serializesBlockVariantEnumConstantsWithClassBodies() {
+		MovementRecording recording = MovementRecording.create();
+		BlockVariant variant = testVariant(7, Map.of("axis", TestAxis.X));
+		recording.recordBlockVariant(Material.STONE, 7, variant);
+
+		ByteBuf buffer = Unpooled.buffer();
+		try {
+			MovementRecording.STREAM_CODEC.encode(buffer, recording);
+			MovementRecording decoded = MovementRecording.STREAM_CODEC.decode(buffer);
+
+			assertEquals(TestAxis.X, decoded.blockVariant(Material.STONE, 7).enumProperty(TestAxis.class, "axis"));
+		} finally {
+			buffer.release();
+		}
+	}
+
+	@Test
 	public void deserializeOlderSmartRecordingWithoutCollisionShapes() {
 		MovementRecording recording = recordingWithoutCollisionShapes();
 		ByteBuf buf = Unpooled.buffer();
@@ -153,9 +273,31 @@ final class MovementRecordingSerializerTest {
 
 			MovementRecording decoded = MovementRecording.STREAM_CODEC.decode(buf);
 
+			assertNull(decoded.frames().get(0).movementState());
 			deepEqualsCheck(recording, decoded);
 		} finally {
 			buf.release();
+		}
+	}
+
+	@Test
+	void deserializeVersion2FrameWithoutMovementState() {
+		MovementRecording recording = MovementRecording.create();
+		recording.insertFrame(
+			BoundingBox.empty(), Input.none(), Position.immutableEmpty(), Rotation.zero(),
+			new MockFullBlockStaticPlane(), Map.of(), true, Pose.FALL_FLYING
+		);
+		ByteBuf buffer = Unpooled.buffer();
+		try {
+			VERSION_2_SMART_CODEC.encode(buffer, recording);
+
+			MovementRecording decoded = MovementRecording.STREAM_CODEC.decode(buffer);
+
+			assertTrue(decoded.frames().get(0).gliding());
+			assertEquals(Pose.FALL_FLYING, decoded.frames().get(0).physicalPose());
+			assertNull(decoded.frames().get(0).movementState());
+		} finally {
+			buffer.release();
 		}
 	}
 
@@ -288,5 +430,14 @@ final class MovementRecordingSerializerTest {
 			public void dumpStates() {
 			}
 		};
+	}
+
+	private enum TestAxis {
+		X {
+			@Override
+			public String toString() {
+				return "x";
+			}
+		}
 	}
 }

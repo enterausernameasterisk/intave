@@ -27,7 +27,6 @@ import de.jpx3.intave.block.collision.Collision;
 import de.jpx3.intave.block.collision.custom.BedWakeupPositionSearch;
 import de.jpx3.intave.block.shape.BlockShape;
 import de.jpx3.intave.block.shape.BlockShapes;
-import de.jpx3.intave.block.tick.ShulkerBox;
 import de.jpx3.intave.block.type.MaterialSearch;
 import de.jpx3.intave.block.variant.BlockVariant;
 import de.jpx3.intave.check.CheckService;
@@ -35,6 +34,8 @@ import de.jpx3.intave.check.movement.Physics;
 import de.jpx3.intave.check.movement.Timer;
 import de.jpx3.intave.check.movement.physics.update.MotionAddUpdate;
 import de.jpx3.intave.check.movement.physics.update.MotionSetUpdate;
+import de.jpx3.intave.check.movement.physics.update.PistonActionUpdate;
+import de.jpx3.intave.check.movement.physics.update.ShulkerBoxActionUpdate;
 import de.jpx3.intave.check.world.InteractionRaytrace;
 import de.jpx3.intave.executor.Synchronizer;
 import de.jpx3.intave.math.Hypot;
@@ -47,6 +48,11 @@ import de.jpx3.intave.module.linker.packet.ListenerPriority;
 import de.jpx3.intave.module.linker.packet.PacketSubscription;
 import de.jpx3.intave.module.linker.packet.PrioritySlot;
 import de.jpx3.intave.module.mitigate.AttackNerfStrategy;
+import de.jpx3.intave.module.test.PhysicsTestRecorder;
+import de.jpx3.intave.module.test.record.MovementRecording;
+import de.jpx3.intave.module.test.record.TickRange;
+import de.jpx3.intave.module.test.record.action.PistonSlimeAction;
+import de.jpx3.intave.module.test.record.action.ShulkerBoxAction;
 import de.jpx3.intave.module.tracker.entity.Entity;
 import de.jpx3.intave.module.tracker.player.PacketLogging;
 import de.jpx3.intave.module.violation.Violation;
@@ -69,15 +75,21 @@ import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Cancellable;
 import org.bukkit.event.EventPriority;
+import org.bukkit.event.block.BlockPistonExtendEvent;
+import org.bukkit.event.block.BlockPistonRetractEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
@@ -90,14 +102,62 @@ import static de.jpx3.intave.module.linker.packet.PacketId.Client.POSITION;
 import static de.jpx3.intave.module.linker.packet.PacketId.Client.VEHICLE_MOVE;
 import static de.jpx3.intave.module.linker.packet.PacketId.Server.*;
 import static de.jpx3.intave.module.violation.Violation.ViolationFlags.DISPLAY_IN_ALL_VERBOSE_MODES;
-import static de.jpx3.intave.user.meta.ProtocolMetadata.VER_1_16;
-import static de.jpx3.intave.user.meta.ProtocolMetadata.VER_1_9;
+import static de.jpx3.intave.user.meta.ProtocolMetadata.*;
 
 public final class MovementDispatcher extends Module {
+  private static final long PISTON_SNAPSHOT_RETENTION_NANOS = TimeUnit.SECONDS.toNanos(2);
+
   private Physics physicsCheck;
   private TeleportController teleportController;
   private InteractionRaytrace interactionRaytraceCheck;
   private Timer timerCheck;
+  private final Map<PistonSnapshotKey, PistonSnapshot> pistonSnapshots = new ConcurrentHashMap<>();
+  private final AtomicLong nextPistonSnapshotCleanup = new AtomicLong(System.nanoTime());
+
+  @BukkitEventSubscription(priority = EventPriority.MONITOR, ignoreCancelled = true)
+  public void capturePistonExtension(BlockPistonExtendEvent event) {
+    capturePistonAction(event.getBlock(), event.getBlocks(), true);
+  }
+
+  @BukkitEventSubscription(priority = EventPriority.MONITOR, ignoreCancelled = true)
+  public void capturePistonRetraction(BlockPistonRetractEvent event) {
+    capturePistonAction(event.getBlock(), event.getBlocks(), false);
+  }
+
+  private void capturePistonAction(Block piston, List<Block> movedBlocks, boolean extending) {
+    long now = System.nanoTime();
+    cleanupPistonSnapshots(now);
+
+    List<BlockPosition> slimeSources = new ArrayList<>();
+    for (Block movedBlock : movedBlocks) {
+      if (movedBlock.getType() == Material.SLIME_BLOCK) {
+        slimeSources.add(new BlockPosition(
+          movedBlock.getX(), movedBlock.getY(), movedBlock.getZ()
+        ));
+      }
+    }
+
+    PistonSnapshotKey key = new PistonSnapshotKey(
+      piston.getWorld().getUID(),
+      new BlockPosition(piston.getX(), piston.getY(), piston.getZ()),
+      extending
+    );
+    pistonSnapshots.put(key, new PistonSnapshot(slimeSources, now));
+  }
+
+  private void cleanupPistonSnapshots(long now) {
+    long nextCleanup = nextPistonSnapshotCleanup.get();
+    if (now < nextCleanup || !nextPistonSnapshotCleanup.compareAndSet(
+      nextCleanup, now + PISTON_SNAPSHOT_RETENTION_NANOS
+    )) {
+      return;
+    }
+    pistonSnapshots.forEach((key, snapshot) -> {
+      if (snapshot.expired(now)) {
+        pistonSnapshots.remove(key, snapshot);
+      }
+    });
+  }
 
   @Override
   public void enable() {
@@ -115,19 +175,34 @@ public final class MovementDispatcher extends Module {
   public void receiveExternalTeleport(PlayerTeleportEvent event) {
     Player player = event.getPlayer();
     User user = UserRepository.userOf(player);
+    PacketLogging logging = Modules.tracker().packetLogging();
     PlayerTeleportEvent.TeleportCause cause = event.getCause();
     if (cause == PlayerTeleportEvent.TeleportCause.NETHER_PORTAL || event.isCancelled()) {
+      logging.logSystemMessage(user, () ->
+        "TELEPORT CORRECTION SKIPPED id=" + Integer.toHexString(System.identityHashCode(event)) +
+          " cause=" + cause + " cancelled=" + event.isCancelled()
+      );
       return;
     }
     Location fromLocation = event.getFrom();
     Location toLocation = event.getTo();
     double teleportDistance = toLocation.getWorld() != player.getWorld() ? Double.MAX_VALUE : toLocation.distance(fromLocation);
-    if (toLocation.getWorld() != player.getWorld() || teleportDistance > 8) {
-      Location fixed = fixLocation(user, toLocation);
-      Synchronizer.synchronize(() -> {
-        player.teleport(fixed, PlayerTeleportEvent.TeleportCause.NETHER_PORTAL);
-      });
-    }
+//    if (toLocation.getWorld() != player.getWorld() || teleportDistance > 8) {
+//      Location fixedLocation = fixLocation(user, toLocation);
+//      event.setTo(fixedLocation);
+//      logging.logSystemMessage(user, () ->
+//        "TELEPORT CORRECTION APPLIED id=" + Integer.toHexString(System.identityHashCode(event)) +
+//          " distance=" + teleportDistance +
+//          " requested=" + MathHelper.formatPosition(toLocation) +
+//          " corrected=" + MathHelper.formatPosition(fixedLocation)
+//      );
+//    } else {
+      logging.logSystemMessage(user, () ->
+        "TELEPORT CORRECTION NOT_REQUIRED id=" + Integer.toHexString(System.identityHashCode(event)) +
+          " distance=" + teleportDistance +
+          " requested=" + MathHelper.formatPosition(toLocation)
+      );
+//    }
     MovementMetadata movementData = user.meta().movement();
     movementData.artificialFallDistance = 0;
   }
@@ -162,7 +237,7 @@ public final class MovementDispatcher extends Module {
     Player player = respawn.getPlayer();
     User user = UserRepository.userOf(player);
     Location respawnLocation = respawn.getRespawnLocation().clone();
-    respawn.setRespawnLocation(fixLocation(user, respawnLocation));
+//    respawn.setRespawnLocation(fixLocation(user, respawnLocation));
   }
 
   private static final int BASE_SHIFTS = 8;
@@ -175,6 +250,9 @@ public final class MovementDispatcher extends Module {
       location.getWorld(), location.getBlockX(), location.getBlockZ()
     );
     if (!inLoadedChunk) {
+      Modules.tracker().packetLogging().logSystemMessage(user, () ->
+        "TELEPORT LOCATION FIX skipped=unloaded_chunk location=" + MathHelper.formatPosition(location)
+      );
       return location;
     }
 
@@ -182,11 +260,15 @@ public final class MovementDispatcher extends Module {
     int baseShifts = BASE_SHIFTS;
     Location fixedLocation = location.clone();
     World world = location.getWorld();
+    int collisionShifts = 0;
+    int clearanceShifts = 0;
 
     // A: move out of existing blocks
     BoundingBox bb = BoundingBox.fromPosition(user, movement, fixedLocation);
+    boolean initiallyColliding = Collision.unsafePresent(world, user.player(), bb);
     while (fixedLocation.getY() < WorldHeight.UPPER_WORLD_LIMIT && baseShifts-- > 0 && Collision.unsafePresent(world, user.player(), bb) && Collision.unsafeNonePresent(world, user.player(), bb.offset(0, BASE_SHIFTS * 0.1, 0))) {
       fixedLocation.add(0, 0.101, 0);
+      collisionShifts++;
       bb = BoundingBox.fromPosition(user, movement, fixedLocation).grow(0.1);
     }
 
@@ -195,8 +277,20 @@ public final class MovementDispatcher extends Module {
     bb = BoundingBox.fromPosition(user, movement, fixedLocation);
     while (fixedLocation.getY() < WorldHeight.UPPER_WORLD_LIMIT && baseShifts-- > 0 && Collision.unsafeNonePresent(world, user.player(), bb)) {
       fixedLocation.add(0, 0.101, 0);
+      clearanceShifts++;
       bb = BoundingBox.fromPosition(user, movement, fixedLocation).grow(0.1).expand(0.5, 0.45, 0.5);
     }
+    int finalCollisionShifts = collisionShifts;
+    int finalClearanceShifts = clearanceShifts;
+    boolean finallyColliding = Collision.unsafePresent(world, user.player(), BoundingBox.fromPosition(user, movement, fixedLocation));
+    Modules.tracker().packetLogging().logSystemMessage(user, () ->
+      "TELEPORT LOCATION FIX loaded=true initially_colliding=" + initiallyColliding +
+        " collision_shifts=" + finalCollisionShifts +
+        " clearance_shifts=" + finalClearanceShifts +
+        " finally_colliding=" + finallyColliding +
+        " from=" + MathHelper.formatPosition(location) +
+        " to=" + MathHelper.formatPosition(fixedLocation)
+    );
     return fixedLocation;
   }
 
@@ -375,7 +469,6 @@ public final class MovementDispatcher extends Module {
           double yawDifference = MathHelper.noAbsDistanceInDegrees(movement.lastRotationYaw, yaw);
           double pitchDifference = MathHelper.noAbsDistanceInDegrees(movement.lastRotationPitch, pitch);
           System.out.println("[Intave] Click movement ignore distance: " + distance + " yaw: " + yawDifference + " pitch: " + pitchDifference);
-          IntavePlugin.singletonInstance().logTransmittor().addPlayerLog(player, "(DEBUG/MOVEMENTIGNORE) Click movement ignore distance: " + distance + " yaw: " + yawDifference + " pitch: " + pitchDifference);
         }
         logging.logSystemMessage(user, () -> "MOVEMENT IGNORED: Click movement ignore distance: " + distance);
 
@@ -423,7 +516,6 @@ public final class MovementDispatcher extends Module {
     if (movement.awaitTeleport || movement.awaitOutgoingTeleport) {
       if (DEBUG_MOVEMENT_IGNORE) {
         System.out.println("[Intave] Teleport movement ignore " + movement.awaitTeleport + " " + movement.awaitOutgoingTeleport);
-        IntavePlugin.singletonInstance().logTransmittor().addPlayerLog(player, "(DEBUG/MOVEMENTIGNORE) Teleport movement ignore " + movement.awaitTeleport + " " + movement.awaitOutgoingTeleport);
       }
       event.setCancelled(true);
       movement.dropPostTickMotionProcessing = true;
@@ -437,7 +529,6 @@ public final class MovementDispatcher extends Module {
     if (distance > 50) {
       if (DEBUG_MOVEMENT_IGNORE) {
         System.out.println("[Intave] Distance movement ignore: " + distance);
-        IntavePlugin.singletonInstance().logTransmittor().addPlayerLog(player, "(DEBUG/MOVEMENTIGNORE) Distance movement ignore: " + distance);
       }
       logging.logSystemMessage(user, () -> "MOVEMENT REJECTED: Distance over limit: " + distance);
       movement.dropPostTickMotionProcessing = true;
@@ -491,7 +582,6 @@ public final class MovementDispatcher extends Module {
     if (violationLevelData.isInActiveTeleportBundle) {
       if (DEBUG_MOVEMENT_IGNORE) {
         System.out.println("[Intave] Teleport bundle movement ignore");
-        IntavePlugin.singletonInstance().logTransmittor().addPlayerLog(player, "(DEBUG/MOVEMENTIGNORE) Teleport bundle movement ignore");
       }
       logging.logSystemMessage(user, () -> "MOVEMENT IGNORED: Teleport bundle movement ignore");
       movement.dropPostTickMotionProcessing = true;
@@ -507,7 +597,6 @@ public final class MovementDispatcher extends Module {
     ) {
       if (DEBUG_MOVEMENT_IGNORE) {
         System.out.println("[Intave] Movement reset ignore");
-        IntavePlugin.singletonInstance().logTransmittor().addPlayerLog(player, "(DEBUG/MOVEMENTIGNORE) Movement reset ignore");
       }
       logging.logSystemMessage(user, () -> "MOVEMENT IGNORED: Movement reset ignore");
       movement.canResetMotion = false;
@@ -552,7 +641,6 @@ public final class MovementDispatcher extends Module {
     } else {
       if (DEBUG_MOVEMENT_IGNORE) {
         System.out.println("[Intave] Basic reset movement ignore");
-        IntavePlugin.singletonInstance().logTransmittor().addPlayerLog(player, "(DEBUG/MOVEMENTIGNORE) Basic reset movement ignore");
       }
       movement.canResetMotion = true;
     }
@@ -742,7 +830,10 @@ public final class MovementDispatcher extends Module {
     User user = UserRepository.userOf(player);
     MovementMetadata movementData = user.meta().movement();
     PacketContainer packet = event.getPacket();
-    if (MinecraftVersions.VER1_21_3.atOrAbove() && user.meta().protocol().sendsInputs()) {
+    if (MinecraftVersions.VER1_21_2.atOrAbove()) {
+      if (!user.meta().protocol().sendsInputs()) {
+        return;
+      }
       StructureModifier<Boolean> inputBooleans = packet.getStructures().read(0).getBooleans();
       movementData.lastInput = movementData.input;
       movementData.input = new Input(
@@ -914,15 +1005,23 @@ public final class MovementDispatcher extends Module {
       Motion finalVelocity = motion.copy();
 
       AtomicReference<MotionSetUpdate> velocity = new AtomicReference<>(null);
+      PhysicsTestRecorder recorder = Modules.physicsTestRecorder();
+      AtomicReference<PhysicsTestRecorder.VelocityCapture> recordingVelocity = new AtomicReference<>(null);
       user.doubleTickFeedback(event,
         () -> {
-	        velocity.set(MotionSetUpdate.openEnded(
-		        finalVelocity,
-		        movementData
-	        ));
+          recordingVelocity.set(
+            recorder.beginVelocity(user, finalVelocity)
+          );
+          velocity.set(MotionSetUpdate.openEnded(
+            finalVelocity,
+            movementData
+          ));
           movementData.queueTickAmbiguousUpdate(velocity.get());
         },
         () -> {
+          recorder.completeVelocity(
+            user, recordingVelocity.get()
+          );
           MotionSetUpdate myMotionSetUpdate = velocity.get();
           if (myMotionSetUpdate != null) {
             myMotionSetUpdate.canNotRunAfterThisTick(movementData);
@@ -999,7 +1098,7 @@ public final class MovementDispatcher extends Module {
     packetsOut = BLOCK_ACTION
   )
   public void onBlockAction(
-    User user, BlockActionReader reader
+    User user, BlockActionReader reader, PacketEvent event
   ) {
     Player player = user.player();
     MovementMetadata movement = user.meta().movement();
@@ -1009,101 +1108,244 @@ public final class MovementDispatcher extends Module {
       World world = player.getWorld();
       BlockVariant variant = VolatileBlockAccess.variantAccess(user, blockPosition.toLocation(world));
       Direction facing = variant.enumProperty(Direction.class, "facing");
-      boolean opening = reader.data() == 1;
-      user.tickFeedback(() -> {
-        if (movement.shulkerData.containsKey(blockPosition)) {
-          ShulkerBox shulkerBox = movement.shulkerData.get(blockPosition);
-          if (opening) {
-            shulkerBox.open();
-          } else {
-            shulkerBox.close();
-          }
-        } else {
-          int positionHash = blockPosition.getX() << 12 | blockPosition.getY() << 8 | blockPosition.getZ();
-          ShulkerBox box = opening ? ShulkerBox.opening(facing) : ShulkerBox.closing(facing);
-          movement.shulkerData.put(blockPosition, box);
-          movement.shulkers.add(blockPosition);
-          movement.shulkerDataHashCodeAccess.putIfAbsent(positionHash, box);
-        }
-        double distanceToShulker = MathHelper.distanceOf(
-          movement.positionX, movement.positionY, movement.positionZ,
-          blockPosition.getX() + 0.5, blockPosition.getY() + 0.5, blockPosition.getZ() + 0.5
-        );
-        if (distanceToShulker <= 4) {
-          movement.lowestShulkerY = Math.min(movement.lowestShulkerY, blockPosition.getY());
-          movement.highestShulkerY = Math.max(movement.highestShulkerY, blockPosition.getY() + 1);
+      int openCount = reader.data();
+      if (openCount != 0 && openCount != 1) {
+        return;
+      }
+      boolean opening = openCount == 1;
+      if (user.protocolVersion() >= VER_1_11) {
+        queueShulkerBoxAction(user, event, blockPosition, facing, opening);
+      }
+    } else if (PISTON_MATERIALS.contains(material)) {
+      BlockPosition blockPosition = reader.blockPosition();
+      int facingIndex = reader.data() & 7;
+      if (facingIndex > 5) {
+        return;
+      }
+      Direction facing = Direction.getFront(facingIndex);
+      int action = reader.action();
+      if (action != 0 && action != 1) {
+        return;
+      }
+
+      boolean extending = action == 0;
+      if (user.protocolVersion() >= VER_1_9) {
+        queuePistonAction(user, event, blockPosition, extending, facing);
+      }
+
+      Modules.feedback().synchronize(player, nothing -> {
+        // First off, check if the player is even affected by this
+        RawVector3d directionVec = facing.directionVector();
+        BoundingBox pistonCollisionArea = new BoundingBox(0, 0, 0, 1.1f, 1.1f, 1.1f);
+        int expectedPistonX = (int) directionVec.x() + blockPosition.getX();
+        int expectedPistonY = (int) directionVec.y() + blockPosition.getY();
+        int expectedPistonZ = (int) directionVec.z() + blockPosition.getZ();
+        BoundingBox expandingBlockArea = pistonCollisionArea.offset(expectedPistonX, expectedPistonY, expectedPistonZ);
+        boolean playerAffected = expandingBlockArea.intersectsWith(user.meta().movement().boundingBox());
+
+        // Only do something if the player is actually affected
+        if (playerAffected) {
+          // Might seem like a high value, doesn't it?
+          // Well this is fine as we constantly check if the player is inside the critical area
+          // where he would get false-mitigated
+          movement.pistonMotionToleranceRemaining = 10;
+          movement.pistonCollisionArea = expandingBlockArea;
+
+          float xOffset = (float) Math.abs(expectedPistonX - user.meta().movement().positionX);
+          float yOffsetBottom = (float) Math.abs((expectedPistonY + 1) - user.meta().movement().boundingBox().minY);
+          float yOffsetTop = (float) Math.abs(expectedPistonY - user.meta().movement().boundingBox().maxY);
+          float zOffset = (float) Math.abs(expectedPistonZ - user.meta().movement().positionZ);
           switch (facing.axis()) {
-            case X_AXIS:
-              movement.shulkerXToleranceRemaining = 20;
+            case X_AXIS: {
+              // Magical hack to get the proper bounding box factor
+              float horizontalBoundingBoxFactor = (float) (user.meta().movement().width() / 2f * directionVec.x());
+              movement.pistonHorizontalAllowance = xOffset + horizontalBoundingBoxFactor + 0.05f;
               break;
-            case Y_AXIS:
-              movement.shulkerYToleranceRemaining = 20;
+            }
+            case Z_AXIS: {
+              // Magical hack to get the proper bounding box factor
+              float horizontalBoundingBoxFactor = (float) (user.meta().movement().width() / 2f * directionVec.z());
+              movement.pistonHorizontalAllowance = zOffset + horizontalBoundingBoxFactor + 0.05f;
               break;
-            case Z_AXIS:
-              movement.shulkerZToleranceRemaining = 20;
+            }
+            case Y_AXIS: {
+              // Cannot be done with directional vectors unfortunately :(
+              switch (facing) {
+                case UP:
+                  movement.pistonVerticalAllowance = yOffsetBottom + 0.05f;
+                  break;
+                case DOWN:
+                  movement.pistonVerticalAllowance = yOffsetTop + 0.05f;
+                  break;
+              }
               break;
+            }
           }
         }
       });
-    } else if (PISTON_MATERIALS.contains(material)) {
-      BlockPosition blockPosition = reader.blockPosition();
-      World world = player.getWorld();
-      BlockVariant variant = VolatileBlockAccess.variantAccess(user, blockPosition.toLocation(world));
-      Direction facing = variant.enumProperty(Direction.class, "facing");
-      Boolean extended = variant.propertyOf("extended");
-      boolean isExtending = true;//extended == null || !extended;
-      if (isExtending) {
-        Modules.feedback().synchronize(player, nothing -> {
-          // First off, check if the player is even affected by this
-          RawVector3d directionVec = facing.directionVector();
-          BoundingBox pistonCollisionArea = new BoundingBox(0, 0, 0, 1.1f, 1.1f, 1.1f);
-          int expectedPistonX = (int) directionVec.x() + blockPosition.getX();
-          int expectedPistonY = (int) directionVec.y() + blockPosition.getY();
-          int expectedPistonZ = (int) directionVec.z() + blockPosition.getZ();
-          BoundingBox expandingBlockArea = pistonCollisionArea.offset(expectedPistonX, expectedPistonY, expectedPistonZ);
-          boolean playerAffected = expandingBlockArea.intersectsWith(user.meta().movement().boundingBox());
+    }
+  }
 
-          // Only do something if the player is actually affected
-          if (playerAffected) {
-            // Might seem like a high value, doesn't it?
-            // Well this is fine as we constantly check if the player is inside the critical area
-            // where he would get false-mitigated
-            movement.pistonMotionToleranceRemaining = 10;
-            movement.pistonCollisionArea = expandingBlockArea;
+  private void queueShulkerBoxAction(
+    User user,
+    PacketEvent event,
+    BlockPosition position,
+    Direction direction,
+    boolean opening
+  ) {
+    MovementMetadata movement = user.meta().movement();
+    AtomicReference<ShulkerBoxActionUpdate> update = new AtomicReference<>(null);
+    AtomicLong recordingStart = new AtomicLong(-1);
+    user.doubleTickFeedback(event,
+      () -> {
+        update.set(ShulkerBoxActionUpdate.openEnded(
+          position, direction, opening, movement
+        ));
+        movement.queueTickAmbiguousUpdate(update.get());
+        applyShulkerTolerance(movement, position, direction);
 
-            float xOffset = (float) Math.abs(expectedPistonX - user.meta().movement().positionX);
-            float yOffsetBottom = (float) Math.abs((expectedPistonY + 1) - user.meta().movement().boundingBox().minY);
-            float yOffsetTop = (float) Math.abs(expectedPistonY - user.meta().movement().boundingBox().maxY);
-            float zOffset = (float) Math.abs(expectedPistonZ - user.meta().movement().positionZ);
-            switch (facing.axis()) {
-              case X_AXIS: {
-                // Magical hack to get the proper bounding box factor
-                float horizontalBoundingBoxFactor = (float) (user.meta().movement().width() / 2f * directionVec.x());
-                movement.pistonHorizontalAllowance = xOffset + horizontalBoundingBoxFactor + 0.05f;
-                break;
-              }
-              case Z_AXIS: {
-                // Magical hack to get the proper bounding box factor
-                float horizontalBoundingBoxFactor = (float) (user.meta().movement().width() / 2f * directionVec.z());
-                movement.pistonHorizontalAllowance = zOffset + horizontalBoundingBoxFactor + 0.05f;
-                break;
-              }
-              case Y_AXIS: {
-                // Cannot be done with directional vectors unfortunately :(
-                switch (facing) {
-                  case UP:
-                    movement.pistonVerticalAllowance = yOffsetBottom + 0.05f;
-                    break;
-                  case DOWN:
-                    movement.pistonVerticalAllowance = yOffsetTop + 0.05f;
-                    break;
-                }
-                break;
-              }
-            }
-          }
-        });
+        MovementRecording recording = Modules.physicsTestRecorder().recordingSessionOf(user);
+        if (recording != null) {
+          recordingStart.set(recording.ticks());
+        }
+      },
+      () -> {
+        ShulkerBoxActionUpdate shulkerAction = update.get();
+        if (shulkerAction != null) {
+          shulkerAction.canNotRunAfterThisTick(movement);
+        }
+        MovementRecording recording = Modules.physicsTestRecorder().recordingSessionOf(user);
+        long start = recordingStart.get();
+        if (recording != null && start >= 0) {
+          recording.insertAction(new ShulkerBoxAction(
+            position,
+            direction,
+            opening,
+            TickRange.betweenInclusive(start, recording.ticks())
+          ));
+        }
       }
+    );
+  }
+
+  private static void applyShulkerTolerance(
+    MovementMetadata movement,
+    BlockPosition position,
+    Direction direction
+  ) {
+    double distanceToShulker = MathHelper.distanceOf(
+      movement.positionX, movement.positionY, movement.positionZ,
+      position.getX() + 0.5, position.getY() + 0.5, position.getZ() + 0.5
+    );
+    if (distanceToShulker > 4) {
+      return;
+    }
+
+    movement.lowestShulkerY = Math.min(movement.lowestShulkerY, position.getY());
+    movement.highestShulkerY = Math.max(movement.highestShulkerY, position.getY() + 1);
+    switch (direction.axis()) {
+      case X_AXIS:
+        movement.shulkerXToleranceRemaining = 20;
+        break;
+      case Y_AXIS:
+        movement.shulkerYToleranceRemaining = 20;
+        break;
+      case Z_AXIS:
+        movement.shulkerZToleranceRemaining = 20;
+        break;
+    }
+  }
+
+  private void queuePistonAction(
+    User user,
+    PacketEvent event,
+    BlockPosition pistonPosition,
+    boolean extending,
+    Direction facing
+  ) {
+    long now = System.nanoTime();
+    PistonSnapshot snapshot = pistonSnapshots.get(new PistonSnapshotKey(
+      user.player().getWorld().getUID(), pistonPosition, extending
+    ));
+    if (snapshot == null || snapshot.expired(now) || snapshot.slimeSources.isEmpty()) {
+      return;
+    }
+
+    MovementMetadata movement = user.meta().movement();
+    Direction movementDirection = extending ? facing : facing.getOpposite();
+    AtomicReference<PistonActionUpdate> update = new AtomicReference<>(null);
+    AtomicLong recordingStart = new AtomicLong(-1);
+    user.doubleTickFeedback(event,
+      () -> {
+        update.set(PistonActionUpdate.openEnded(
+          movementDirection, snapshot.slimeSources, movement
+        ));
+        movement.queueTickAmbiguousUpdate(update.get());
+        MovementRecording recording = Modules.physicsTestRecorder().recordingSessionOf(user);
+        if (recording != null) {
+          recordingStart.set(recording.ticks());
+        }
+      },
+      () -> {
+        PistonActionUpdate pistonAction = update.get();
+        if (pistonAction != null) {
+          pistonAction.canNotRunAfterThisTick(movement);
+        }
+        MovementRecording recording = Modules.physicsTestRecorder().recordingSessionOf(user);
+        long start = recordingStart.get();
+        if (recording != null && start >= 0) {
+          recording.insertAction(new PistonSlimeAction(
+            movementDirection,
+            snapshot.slimeSources,
+            TickRange.betweenInclusive(start, recording.ticks())
+          ));
+        }
+      }
+    );
+  }
+
+  private static final class PistonSnapshotKey {
+    private final UUID worldId;
+    private final BlockPosition pistonPosition;
+    private final boolean extending;
+
+    private PistonSnapshotKey(UUID worldId, BlockPosition pistonPosition, boolean extending) {
+      this.worldId = worldId;
+      this.pistonPosition = pistonPosition;
+      this.extending = extending;
+    }
+
+    @Override
+    public boolean equals(Object object) {
+      if (this == object) {
+        return true;
+      }
+      if (!(object instanceof PistonSnapshotKey)) {
+        return false;
+      }
+      PistonSnapshotKey other = (PistonSnapshotKey) object;
+      return extending == other.extending
+        && worldId.equals(other.worldId)
+        && pistonPosition.equals(other.pistonPosition);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(worldId, pistonPosition, extending);
+    }
+  }
+
+  private static final class PistonSnapshot {
+    private final List<BlockPosition> slimeSources;
+    private final long capturedAt;
+
+    private PistonSnapshot(List<BlockPosition> slimeSources, long capturedAt) {
+      this.slimeSources = Collections.unmodifiableList(new ArrayList<>(slimeSources));
+      this.capturedAt = capturedAt;
+    }
+
+    private boolean expired(long now) {
+      return now - capturedAt > PISTON_SNAPSHOT_RETENTION_NANOS;
     }
   }
 
@@ -1124,7 +1366,6 @@ public final class MovementDispatcher extends Module {
 //          user.player().sendMessage("Item Usage Tick");
 //        });
 //        System.out.println("[Intave] Item Usage Tick");
-//        IntavePlugin.singletonInstance().logTransmittor().addPlayerLog(user.player(), "(DEBUG/MOVEMENTIGNORE) Item Usage Tick");
       }
     }
   }

@@ -1,5 +1,17 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.packet.reader;
 
+import de.jpx3.intave.adapter.MinecraftVersions;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.HashMap;
@@ -14,9 +26,39 @@ public final class WindowSingleItemReader extends AbstractPacketReader implement
   @Override
   public Map<Integer, ItemStack> itemMap() {
     ItemStack item = packet().getItemModifier().read(0);
-    int slot = packet().getIntegers().read(1);
+    int slot = slot();
     Map<Integer, ItemStack> map = new HashMap<>();
-    map.put(slot, item);
+    if (slot != -1) {
+      map.put(slot, item);
+    }
     return map;
+  }
+
+  private int slot() {
+    int index = MinecraftVersions.VER1_17_0.atOrAbove() ? 2 : 1;
+    Integer integer = packet().getIntegers().readSafely(index);
+    return integer == null ? packet().getShorts().readSafely(0) : integer;
+  }
+
+  @Override
+  public boolean full() {
+    return false;
+  }
+
+  @Override
+  public Integer revision() {
+    return MinecraftVersions.VER1_17_0.atOrAbove()
+      ? packet().getIntegers().readSafely(1)
+      : null;
+  }
+
+  @Override
+  public boolean carriedItemKnown() {
+    return slot() == -1;
+  }
+
+  @Override
+  public ItemStack carriedItem() {
+    return carriedItemKnown() ? packet().getItemModifier().readSafely(0) : null;
   }
 }

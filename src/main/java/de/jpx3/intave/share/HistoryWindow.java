@@ -1,3 +1,14 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.share;
 
 import org.jetbrains.annotations.NotNull;
@@ -5,14 +16,9 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.Set;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public final class HistoryWindow<T> implements Set<T> {
-  private final ReadWriteLock lock = new ReentrantReadWriteLock();
-  private final Lock readLock = lock.readLock();
-  private final Lock writeLock = lock.writeLock();
+  private final Object monitor = new Object();
 
   private final int capacity;
   private final T[] elements;
@@ -26,31 +32,27 @@ public final class HistoryWindow<T> implements Set<T> {
 
   @Override
   public int size() {
-    try {
-      readLock.lock();
+    synchronized (monitor) {
       return Math.min(Math.abs((int) fullSize), capacity);
-    } finally {
-      readLock.unlock();
     }
   }
 
   @Override
   public boolean isEmpty() {
-    return false;
+    synchronized (monitor) {
+      return fullSize == 0;
+    }
   }
 
   @Override
   public boolean contains(Object o) {
-    try {
-      readLock.lock();
+    synchronized (monitor) {
       for (T element : elements) {
         if (element.equals(o)) {
           return true;
         }
       }
       return false;
-    } finally {
-      readLock.unlock();
     }
   }
 
@@ -81,18 +83,15 @@ public final class HistoryWindow<T> implements Set<T> {
     if (length < 0) {
       throw new IllegalArgumentException("Length must be greater than or equal to 0");
     }
-    if (length > size()) {
-      throw new IllegalArgumentException("Can not go back more than the size of the history");
-    }
-    try {
-      readLock.lock();
+    synchronized (monitor) {
+      if (length > Math.min(Math.abs((int) fullSize), capacity)) {
+        throw new IllegalArgumentException("Can not go back more than the size of the history");
+      }
       int index = (pos - length) % capacity;
       while (index < 0) {
         index += capacity;
       }
       return elements[index];
-    } finally {
-      readLock.unlock();
     }
   }
 
@@ -107,13 +106,10 @@ public final class HistoryWindow<T> implements Set<T> {
   }
 
   public boolean add(T element) {
-    try {
-      writeLock.lock();
+    synchronized (monitor) {
       fullSize++;
       elements[pos = ((pos + 1) % capacity)] = element;
       return true;
-    } finally {
-      writeLock.unlock();
     }
   }
 
@@ -129,15 +125,12 @@ public final class HistoryWindow<T> implements Set<T> {
 
   @Override
   public boolean addAll(@NotNull Collection<? extends T> c) {
-    try {
-      writeLock.lock();
+    synchronized (monitor) {
       for (T element : c) {
         fullSize++;
         elements[pos = ((pos + 1) % capacity)] = element;
       }
       return true;
-    } finally {
-      writeLock.unlock();
     }
   }
 
@@ -153,15 +146,12 @@ public final class HistoryWindow<T> implements Set<T> {
 
   @Override
   public void clear() {
-    try {
-      writeLock.lock();
+    synchronized (monitor) {
       for (int i = 0; i < capacity; i++) {
         elements[i] = null;
       }
       pos = 0;
       fullSize = 0;
-    } finally {
-      writeLock.unlock();
     }
   }
 

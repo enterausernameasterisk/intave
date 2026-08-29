@@ -39,7 +39,7 @@ public final class StorageTrustfactorResolver implements TrustFactorResolver {
       StorageViolationEvents violations = violationStorage.violations();
       for (StorageViolationEvent violation : violations) {
         long timePassedSince = violation.timePassedSince();
-        if ("heuristics".equals(violation.checkName())) {
+        if ("cloud".equals(violation.checkName()) || "heuristics".equals(violation.checkName())) {
           factor = factor.unsafer();
         } else if (timePassedSince < 1000 * 60 * 15) {
           factor = factor.unsafer();

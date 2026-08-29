@@ -11,7 +11,6 @@
 
 package de.jpx3.intave.check.movement.physics.simulator;
 
-import de.jpx3.intave.IntaveControl;
 import de.jpx3.intave.adapter.MinecraftVersions;
 import de.jpx3.intave.block.access.VolatileBlockAccess;
 import de.jpx3.intave.block.fluid.Fluids;
@@ -25,7 +24,6 @@ import de.jpx3.intave.check.movement.physics.environment.MovementCharacteristics
 import de.jpx3.intave.check.movement.physics.environment.Pose;
 import de.jpx3.intave.check.movement.physics.environment.SimulationEnvironment;
 import de.jpx3.intave.diagnostic.timings.Timings;
-import de.jpx3.intave.executor.Synchronizer;
 import de.jpx3.intave.module.Modules;
 import de.jpx3.intave.module.tracker.entity.Entity;
 import de.jpx3.intave.player.Effects;
@@ -618,15 +616,6 @@ class BaseSimulator extends Simulator {
 
     Material block = environment.collideMaterial();
 
-    if (IntaveControl.DEBUG_MOVEMENT_BLOCK_FALLEN_UPON) {
-      if (block != null) {
-        String name = block.name();
-        Synchronizer.synchronize(() -> {
-          player.sendMessage("Block fallen upon: " + name);
-        });
-      }
-    }
-
     BlockPhysics.fallenUpon(user, block);
 
     // onLanded
@@ -640,9 +629,6 @@ class BaseSimulator extends Simulator {
         motion.motionY = 0.0;
       }
     }
-
-//    environment.checkSupportingBlock();
-
 
     // Block collisions
 

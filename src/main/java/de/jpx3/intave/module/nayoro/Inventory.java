@@ -1,15 +1,28 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.module.nayoro;
 
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonWriter;
+import de.jpx3.intave.codec.JsonStreamCodecs;
+import de.jpx3.intave.codec.StreamCodec;
 import org.bukkit.Material;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.inventory.ItemStack;
 
-import java.io.DataInput;
-import java.io.DataOutput;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.io.IOException;
+import java.util.*;
+
+import static de.jpx3.intave.codec.JsonStreamCodecs.*;
 
 public class Inventory {
   private final int windowId;
@@ -43,6 +56,23 @@ public class Inventory {
   }
 
   public static class Item {
+    public static final StreamCodec<JsonReader, JsonWriter, Item> JSON_CODEC = object(
+      values -> new Item(
+        values.value(0), values.value(1), values.value(2),
+        values.value(3), values.value(4), values.value(5)
+      ),
+      stringField("type", Item::type),
+      integerField("amount", Item::amount),
+      field("category", ItemCategory.JSON_CODEC, Item::category, ItemCategory.OTHER),
+      booleanField("glowing", Item::glowing),
+      doubleField("baseQuality", Item::baseQuality),
+      doubleField("enchantmentQuality", Item::enchantmentQuality)
+    );
+    public static final StreamCodec<JsonReader, JsonWriter, Map<Integer, Item>> SLOT_MAP_JSON_CODEC =
+      slotMapJsonCodec();
+    public static final StreamCodec<JsonReader, JsonWriter, java.util.List<Item>> NULLABLE_LIST_JSON_CODEC =
+      listCodecOf(nullable(JSON_CODEC));
+
     private final String type;
     private final int amount;
     private final ItemCategory category;
@@ -112,32 +142,35 @@ public class Inventory {
       );
     }
 
-    public void serialize(DataOutput out) {
-      try {
-        out.writeUTF(type);
-        out.writeInt(amount);
-        out.writeInt(category.id());
-        out.writeBoolean(glowing);
-        out.writeDouble(baseQuality);
-        out.writeDouble(enchantmentQuality);
-      } catch (Exception e) {
-        e.printStackTrace();
-      }
-    }
-
-    public static Item deserialize(DataInput in) {
-      try {
-        String type = in.readUTF();
-        int amount = in.readInt();
-        ItemCategory category = ItemCategory.of(in.readInt());
-        boolean glowing = in.readBoolean();
-        double baseQuality = in.readDouble();
-        double enchantmentQuality = in.readDouble();
-        return new Item(type, amount, category, glowing, baseQuality, enchantmentQuality);
-      } catch (Exception e) {
-        e.printStackTrace();
-        return null;
-      }
+    private static StreamCodec<JsonReader, JsonWriter, Map<Integer, Item>> slotMapJsonCodec() {
+      return JsonStreamCodecs.of(
+        (writer, items) -> {
+          writer.beginObject();
+          for (Map.Entry<Integer, Item> entry : new TreeMap<>(items).entrySet()) {
+            writer.name(Integer.toString(entry.getKey()));
+            JSON_CODEC.encode(writer, entry.getValue());
+          }
+          writer.endObject();
+        },
+        reader -> {
+          Map<Integer, Item> items = new LinkedHashMap<>();
+          reader.beginObject();
+          while (reader.hasNext()) {
+            if (items.size() >= 1024) {
+              throw new IllegalStateException("Window item map exceeds maximum size of 1024");
+            }
+            int slot;
+            try {
+              slot = Integer.parseInt(reader.nextName());
+            } catch (NumberFormatException exception) {
+              throw new IOException("Invalid inventory slot", exception);
+            }
+            items.put(slot, JSON_CODEC.decode(reader));
+          }
+          reader.endObject();
+          return items;
+        }
+      );
     }
   }
 
@@ -158,6 +191,9 @@ public class Inventory {
     OTHER(10)
 
     ;
+
+    public static final StreamCodec<JsonReader, JsonWriter, ItemCategory> JSON_CODEC =
+      enumCodec(ItemCategory.class);
 
     private final int id;
     private final double[] attackDamage;

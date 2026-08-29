@@ -14,12 +14,16 @@ package de.jpx3.intave.check.other.protocolscanner;
 import com.comphenix.protocol.events.PacketContainer;
 import com.comphenix.protocol.events.PacketEvent;
 import com.comphenix.protocol.wrappers.EnumWrappers;
+import de.jpx3.intave.IntavePlugin;
 import de.jpx3.intave.check.CheckPart;
 import de.jpx3.intave.check.other.ProtocolScanner;
 import de.jpx3.intave.module.Modules;
 import de.jpx3.intave.module.linker.packet.PacketSubscription;
 import de.jpx3.intave.module.violation.Violation;
+import de.jpx3.intave.user.MessageChannel;
 import de.jpx3.intave.user.User;
+import de.jpx3.intave.user.meta.InventoryMetadata;
+import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
 
 import java.util.Locale;
@@ -50,7 +54,12 @@ public final class InvalidRelease extends CheckPart<ProtocolScanner> {
 					.withVL(3)
 					.build();
 				Modules.violationProcessor().processViolation(violation);
-				user.meta().inventory().lastFoodConsumptionBlockRequest = System.currentTimeMillis();
+				InventoryMetadata inventory = user.meta().inventory();
+				inventory.lastFoodConsumptionBlockRequest = System.currentTimeMillis();
+				inventory.releaseItemNextTick();
+				if (user.receives(MessageChannel.DEBUG_ITEM_RESETS)) {
+					user.player().sendMessage(IntavePlugin.prefix() + "Requesting item usage reset because of " + ChatColor.RED + "an invalid release packet");
+				}
 			}
 		}
 	}

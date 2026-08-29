@@ -63,7 +63,7 @@ final class ThreeTickSimulationSearchTest {
     environment.setLastMovementConfiguration(MovementConfiguration.blank());
     environment.hasSprintSpeed = true;
 
-    ThreeTickSimulationSearch search = new ThreeTickSimulationSearch(false, false);
+    ThreeTickSimulationSearch search = new ThreeTickSimulationSearch(false);
     List<PostTickSimulation> candidates = search.afterTickMotionCandidates(
       user,
       environment,
@@ -101,7 +101,7 @@ final class ThreeTickSimulationSearchTest {
     environment.setLastPosition(POSITION);
     environment.setSimulationResult(SimulationResult.untouched(MOTION.copy()));
     environment.setLastMovementConfiguration(MovementConfiguration.blank());
-    return new ThreeTickSimulationSearch(false, false).afterTickMotionCandidates(
+    return new ThreeTickSimulationSearch(false).afterTickMotionCandidates(
       user, environment, simulator, POSITION, SIMULATED_MOTION
     );
   }

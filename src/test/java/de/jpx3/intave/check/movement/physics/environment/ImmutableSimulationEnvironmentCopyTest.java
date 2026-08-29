@@ -11,18 +11,64 @@
 
 package de.jpx3.intave.check.movement.physics.environment;
 
+import de.jpx3.intave.block.tick.ShulkerBox;
+import de.jpx3.intave.block.tick.piston.PistonSlimeMovement;
 import de.jpx3.intave.check.movement.physics.simulator.BoatSimulator.Status;
-import de.jpx3.intave.share.BoundingBox;
-import de.jpx3.intave.share.Motion;
-import de.jpx3.intave.share.Position;
+import de.jpx3.intave.share.*;
 import org.bukkit.util.Vector;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
+import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 final class ImmutableSimulationEnvironmentCopyTest {
+	@Test
+	void shulkerBoxesAreFrozenAndCopiedToTarget() {
+		MockSimulationEnvironment source = new MockSimulationEnvironment();
+		BlockPosition position = new BlockPosition(1, 2, 3);
+		source.setShulkerBoxes(Collections.singletonMap(
+			position, ShulkerBox.opening(Direction.SOUTH)
+		));
+
+		SimulationEnvironment copy = source.immutableCopy();
+		source.setShulkerBoxes(Collections.emptyMap());
+
+		assertEquals(Direction.SOUTH, copy.shulkerBoxAt(1, 2, 3).direction());
+		assertThrows(UnsupportedOperationException.class, () -> copy.shulkerBoxes().clear());
+
+		MockSimulationEnvironment target = new MockSimulationEnvironment();
+		copy.commitTo(target);
+		assertEquals(copy.shulkerBoxes(), target.shulkerBoxes());
+	}
+
+	@Test
+	void pistonSlimeMovementsAreFrozenAndCopiedToTarget() {
+		MockSimulationEnvironment source = new MockSimulationEnvironment();
+		source.setPistonSlimeMovements(Collections.singletonList(
+			new PistonSlimeMovement(
+				Direction.SOUTH,
+				Collections.singletonList(new BlockPosition(1, 2, 3)),
+				4
+			)
+		));
+
+		SimulationEnvironment copy = source.immutableCopy();
+		source.setPistonSlimeMovements(Collections.emptyList());
+
+		assertEquals(1, copy.pistonSlimeMovements().size());
+		assertThrows(
+			UnsupportedOperationException.class,
+			() -> copy.pistonSlimeMovements().clear()
+		);
+
+		MockSimulationEnvironment target = new MockSimulationEnvironment();
+		copy.commitTo(target);
+
+		assertEquals(copy.pistonSlimeMovements(), target.pistonSlimeMovements());
+	}
+
 	@Test
 	void postTickCandidatesAreFrozenAndCopiedToTarget() {
 		MockSimulationEnvironment source = new MockSimulationEnvironment();

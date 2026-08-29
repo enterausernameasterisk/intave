@@ -9,9 +9,12 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public final class Library {
@@ -177,22 +180,22 @@ public final class Library {
   }
 
   private HashResult verifyHash(String extension, MessageDigest digest) {
-    try {
-      String inputURL = String.format(
-        "%s/%s/%s/%s-%s.jar.%s", repository,
-        (path + "/" + name).replace(".", "/"),
-        version, name, version + (suffix.isEmpty() ? "" : (suffix.startsWith("-") ? suffix : "-" + suffix)), extension
-      );
-      URL url = new URL(inputURL);
-      InputStream inputStream = url.openStream();
+    try (InputStream inputStream = new URL(String.format(
+      "%s/%s/%s/%s-%s.jar.%s", repository,
+      (path + "/" + name).replace(".", "/"),
+      version, name, version + (suffix.isEmpty() ? "" : (suffix.startsWith("-") ? suffix : "-" + suffix)), extension
+    )).openStream()) {
       byte[] hashBuffer = new byte[4096];
       int length;
       StringBuilder stringBuilder = new StringBuilder();
       while ((length = inputStream.read(hashBuffer)) > 0) {
-        stringBuilder.append(new String(hashBuffer, 0, length));
+        stringBuilder.append(new String(hashBuffer, 0, length, StandardCharsets.US_ASCII));
       }
-      String expectedHash = stringBuilder.toString();
-      String calculatedHash = String.format("%040x", new java.math.BigInteger(1, digest.digest()));
+      String expectedHash = extractChecksum(stringBuilder.toString(), digest.getDigestLength() * 2);
+      if (expectedHash == null) {
+        return HashResult.NO_MATCH;
+      }
+      String calculatedHash = digestHex(digest);
       if (!expectedHash.equalsIgnoreCase(calculatedHash)) {
         return HashResult.NO_MATCH;
       }
@@ -201,6 +204,26 @@ public final class Library {
       return HashResult.NO_HASH;
     }
     return HashResult.MATCH;
+  }
+
+  static String extractChecksum(String content, int hexadecimalLength) {
+    Pattern checksumPattern = Pattern.compile(
+      "(?i)(?<![0-9a-f])[0-9a-f]{" + hexadecimalLength + "}(?![0-9a-f])"
+    );
+    Matcher matcher = checksumPattern.matcher(content);
+    return matcher.find() ? matcher.group() : null;
+  }
+
+  static String digestHex(MessageDigest digest) {
+    byte[] bytes = digest.digest();
+    char[] hexadecimal = new char[bytes.length * 2];
+    char[] digits = "0123456789abcdef".toCharArray();
+    for (int index = 0; index < bytes.length; index++) {
+      int value = bytes[index] & 0xFF;
+      hexadecimal[index * 2] = digits[value >>> 4];
+      hexadecimal[index * 2 + 1] = digits[value & 0x0F];
+    }
+    return new String(hexadecimal);
   }
 
   public enum HashResult {

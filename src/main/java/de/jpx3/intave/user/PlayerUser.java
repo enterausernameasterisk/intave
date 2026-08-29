@@ -11,6 +11,8 @@
 
 package de.jpx3.intave.user;
 
+import ac.intave.cloud.protocol.Packet;
+import ac.intave.cloud.protocol.listener.Serverbound;
 import com.comphenix.protocol.PacketType;
 import com.comphenix.protocol.ProtocolLibrary;
 import com.comphenix.protocol.events.PacketContainer;
@@ -29,7 +31,6 @@ import de.jpx3.intave.block.inside.BlockInsideChecks;
 import de.jpx3.intave.block.type.BlockTypeAccess;
 import de.jpx3.intave.check.movement.physics.environment.Pose;
 import de.jpx3.intave.cleanup.GarbageCollector;
-import de.jpx3.intave.connect.cloud.LogTransmittor;
 import de.jpx3.intave.connect.customclient.CustomClientSupportConfig;
 import de.jpx3.intave.diagnostic.ConsoleOutput;
 import de.jpx3.intave.entity.size.HitboxSize;
@@ -63,7 +64,6 @@ import de.jpx3.intave.user.storage.Storages;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
-import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Player;
 
 import java.lang.ref.Reference;
@@ -75,6 +75,7 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.LongFunction;
 import java.util.function.Predicate;
 
 import static de.jpx3.intave.module.feedback.FeedbackOptions.SELF_SYNCHRONIZATION;
@@ -162,12 +163,7 @@ final class PlayerUser implements User {
 
   private void outputVersionJoinInfo() {
     Player player = player();
-    LogTransmittor logTransmittor = IntavePlugin.singletonInstance().logTransmittor();
     ProtocolMetadata clientData = meta().protocol();
-    if (hasDisabledLogs()) {
-      logTransmittor.addPlayerLog(player, "[SYSTEM] Disabled logs");
-    }
-    logTransmittor.addPlayerLog(player, "(JOIN) " + player.getName() + " joined game "+IntavePlugin.gameId()+" with version " + clientData.versionString() + "/" + clientData.protocolVersion() + " and locale " + clientData.locale());
     if (!ConsoleOutput.CLIENT_VERSION_DEBUG) {
       return;
     }
@@ -177,16 +173,6 @@ final class PlayerUser implements User {
     }
     string += " and locale " + clientData.locale();
     IntaveLogger.logger().info(string);
-  }
-
-  private Boolean disabledCache = null;
-
-  private boolean hasDisabledLogs() {
-    if (disabledCache != null) {
-      return disabledCache;
-    }
-    ConfigurationSection featuresSection = IntavePlugin.singletonInstance().settings().getConfigurationSection("cloud.features");
-    return disabledCache = featuresSection != null && !featuresSection.getBoolean("logs", featuresSection.getBoolean("cloud-logs", true));
   }
 
   @Override
@@ -609,6 +595,11 @@ final class PlayerUser implements User {
         }, SELF_SYNCHRONIZATION);
       }, SELF_SYNCHRONIZATION);
     }, SELF_SYNCHRONIZATION);
+  }
+
+  @Override
+  public void transmitCloudPacket(LongFunction<? extends Packet<Serverbound>> packetGenerator) {
+    IntavePlugin.singletonInstance().cloud().sendPlayerPacket(this, packetGenerator);
   }
 
   @Override

@@ -13,6 +13,7 @@ package de.jpx3.intave.check.movement.physics.simulator;
 
 import de.jpx3.intave.annotate.Immutable;
 import de.jpx3.intave.annotate.Mutable;
+import de.jpx3.intave.block.tick.BlockTickEntities;
 import de.jpx3.intave.check.movement.physics.config.MovementConfiguration;
 import de.jpx3.intave.check.movement.physics.environment.SimulationEnvironment;
 import de.jpx3.intave.share.Motion;
@@ -47,8 +48,7 @@ public abstract class Simulator {
     );
     environment.assumeOccurred(simulation);
 
-    Motion offsetMotion = simulation.offsetMotion().copy();
-    Position newPosition = environment.verifiedLastPosition().add(offsetMotion);
+    Position newPosition = simulation.postTickPosition();
     environment.updateMovement(newPosition, Rotation.zero());
 
     /*
@@ -58,6 +58,9 @@ public abstract class Simulator {
       user, environment,
       config,
       environment.position(), simulation.actualMotion()
+    );
+    afterPostTickMotion = BlockTickEntities.tick(
+      user, environment, environment.position(), afterPostTickMotion
     );
     environment.clearPostTickMotionCandidates();
 
@@ -76,8 +79,7 @@ public abstract class Simulator {
     // assume received
     Position verifiedLastPosition = environment.verifiedLastPosition();
     Motion actualMotion = simulation.actualMotion();
-    Motion offsetMotion = simulation.offsetMotion();
-    Position firstTickPosition = verifiedLastPosition.add(offsetMotion);
+    Position firstTickPosition = simulation.postTickPosition();
     environment.updateMovement(firstTickPosition, null);
     environment.setLastPosition(verifiedLastPosition);
     environment.assumeOccurred(simulation);
@@ -88,11 +90,14 @@ public abstract class Simulator {
       simulation.configuration(),
       firstTickPosition, actualMotion
     );
+    afterTickMotion = BlockTickEntities.tick(
+      user, environment, firstTickPosition, afterTickMotion
+    );
     environment.clearPostTickMotionCandidates();
     environment.setBaseMotion(afterTickMotion);
     environment.setLastOnGround(environment.onGround());
     environment.activeTick(FLYING_PACKET_ACCURATE);
-    environment.setVerifiedLastPosition(firstTickPosition, "Two-tick flying simulation");
+    environment.setVerifiedLastPosition(environment.position(), "Two-tick flying simulation");
     environment.tickComplete(false, false, false);
 
     // receive new packet

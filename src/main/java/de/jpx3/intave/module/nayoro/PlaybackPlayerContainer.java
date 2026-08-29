@@ -1,10 +1,20 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.module.nayoro;
 
+import ac.intave.samples.event.AttackEvent;
+import ac.intave.samples.event.PlayerInitEvent;
+import ac.intave.samples.event.PlayerMoveEvent;
 import de.jpx3.intave.module.mitigate.AttackNerfStrategy;
-import de.jpx3.intave.module.nayoro.detection.DetectionSubscription;
-import de.jpx3.intave.module.nayoro.event.AttackEvent;
-import de.jpx3.intave.module.nayoro.event.PlayerInitEvent;
-import de.jpx3.intave.module.nayoro.event.PlayerMoveEvent;
 import de.jpx3.intave.share.Position;
 import de.jpx3.intave.share.Rotation;
 import de.jpx3.intave.user.User;
@@ -13,12 +23,12 @@ import org.bukkit.GameMode;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 final class PlaybackPlayerContainer extends SinkPlayerContainer {
   private final Environment environment;
   private final Map<Class<?>, CheckCustomMetadata> metadata = new HashMap<>();
-  private final DetectionSubscription detectionSubscription;
   private int id;
   private int version;
   private boolean outdated;
@@ -33,9 +43,8 @@ final class PlaybackPlayerContainer extends SinkPlayerContainer {
   private long lastAttack;
   private int lastAttackedEntityId = -1;
 
-  public PlaybackPlayerContainer(Environment environment, DetectionSubscription... detectionSubscription) {
+  public PlaybackPlayerContainer(Environment environment) {
     this.environment = environment;
-    this.detectionSubscription = DetectionSubscription.merge(detectionSubscription);
   }
 
   @Override
@@ -195,13 +204,23 @@ final class PlaybackPlayerContainer extends SinkPlayerContainer {
   }
 
   @Override
+  public UUID uuid() {
+    return UUID.fromString("00000000-0000-0000-0000-000000000000");
+  }
+
+  @Override
+  public String name() {
+    return "PlaybackPlayer";
+  }
+
+  @Override
   public void debug(String message) {
-    detectionSubscription.onDebug(message);
+    System.out.println("[intave/nayoro/debug] " + message);
   }
 
   @Override
   public void nerf(AttackNerfStrategy strategy, String originCode) {
-    detectionSubscription.onNerf(strategy, originCode);
+    System.out.println("[intave/nayoro/nerf] " + strategy.name() + ": " + originCode);
   }
 
   @Override
@@ -226,12 +245,12 @@ final class PlaybackPlayerContainer extends SinkPlayerContainer {
     version = event.clientVersion();
     outdated = event.serverVersion() > version;
 
-    Position position = event.position();
-    posX = position.getX();
-    posY = position.getY();
-    posZ = position.getZ();
+    ac.intave.samples.share.Position position = event.position();
+    posX = position.x();
+    posY = position.y();
+    posZ = position.z();
 
-    Rotation rotation = event.rotation();
+    ac.intave.samples.share.Rotation rotation = event.rotation();
     yaw = rotation.yaw();
     pitch = rotation.pitch();
 
@@ -243,45 +262,17 @@ final class PlaybackPlayerContainer extends SinkPlayerContainer {
 
   @Override
   public void visit(PlayerMoveEvent event) {
-    event.setLastX(posX);
-    event.setLastY(posY);
-    event.setLastZ(posZ);
-    event.setLastYaw(yaw);
-    event.setLastPitch(pitch);
-
     lastYaw = yaw;
     lastPitch = pitch;
 
-    if (event.applyX()) {
-      this.posX = event.x();
-    } else {
-      event.setX(this.posX);
-    }
-    if (event.applyY()) {
-      this.posY = event.y();
-    } else {
-      event.setY(this.posY);
-    }
-    if (event.applyZ()) {
-      this.posZ = event.z();
-    } else {
-      event.setZ(this.posZ);
-    }
-    if (event.applyYaw()) {
-      this.yaw = event.yaw();
-    } else {
-      event.setYaw(this.yaw);
-    }
-    if (event.applyPitch()) {
-      this.pitch = event.pitch();
-    } else {
-      event.setPitch(this.pitch);
-    }
-    visitAny(event);
-  }
+    ac.intave.samples.share.Position movement = event.position();
+    this.posX = movement.x();
+    this.posY = movement.y();
+    this.posZ = movement.z();
 
-  @Override
-  public String name() {
-    return "PPC";
+    ac.intave.samples.share.Rotation movementRotation = event.rotation();
+    this.yaw = movementRotation.yaw();
+    this.pitch = movementRotation.pitch();
+    visitAny(event);
   }
 }

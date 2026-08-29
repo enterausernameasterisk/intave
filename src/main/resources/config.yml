@@ -16,6 +16,11 @@ ban-commands:
   - "intave internals kickip {player} &cYou have been kicked, as an account with your ip address was removed from the game"
   - "ban {player} Cheating / {log-id}"
 
+# Cloud token
+#   Required for cloud features, such as cloud-based detection, logging and cross-account analysis.
+#   Obtainable at https://intave.de
+cloud-token: "ct_EXAMPLE-TOKEN"
+
 # Movement setback sensitivity
 #   Choose between AGGRESSIVE, CAREFUL, LENIENT, BARELY and SILENT
 #   FALSE POSITIVES? -> REPORT THEM
@@ -26,11 +31,8 @@ rejoin-delay: 3600
 
 # Cloud privacy control
 #   HIGHEST_PRIVACY - only the most critical data is sent (player UUID and usage data)
-#   BEST_DETECTION  - also share IP address for long-term cross-account analysis & detection
-#
-# BEST_DETECTION requires you to update your server's privacy policy or let players know
-#                the first time they join, as it is considered personal data under GDPR.
-privacy: HIGHEST_PRIVACY
+#   BEST_DETECTION  - also use IP address for cross-account analysis & detection
+privacy: BEST_DETECTION
 
 verbose: "{prefix} &c{player}&7/{trust-color}&7 {message} {details} (+{vladded} -> {vl})"
 notify: "{prefix} &c&lInfo&8: &7{text}"

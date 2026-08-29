@@ -12,9 +12,14 @@
 import net.minecrell.pluginyml.bukkit.BukkitPluginDescription.Permission.Default.FALSE
 import net.minecrell.pluginyml.bukkit.BukkitPluginDescription.Permission.Default.OP
 import xyz.jpenilla.runpaper.task.RunServer
+import java.net.URI
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 
 plugins {
   java
+  jacoco
   id("com.github.gmazzo.buildconfig") version "6.0.9"
   id("net.minecrell.plugin-yml.bukkit") version "0.6.0"
   id("com.gradleup.shadow") version "9.4.1"
@@ -41,6 +46,12 @@ val simpleName = "Intave"
 group = "de.jpx3"
 version = "$gitTag-$gitCommitHash"
 description = "Automated cheat detection and prevention"
+
+object IntaveTaskGroups {
+  const val SERVER_RUNS = "Intave - Server Runs"
+  const val SERVER_TESTS = "Intave - Server Tests"
+  const val CLIENTS = "Intave - Clients"
+}
 
 /*
  * Dependencies
@@ -69,24 +80,26 @@ dependencies {
   testImplementation("net.dmulloy2:ProtocolLib:5.4.0")
   testImplementation("io.netty:netty-all:4.2.15.Final")
 
-  // random shit
+  // Loaded by Libraries.setupLibraries() when the plugin starts.
+  compileOnly("ac.intave:samples:0.0.8")
+  compileOnly("ac.intave:cloud-protocol:0.0.4") { isTransitive = false }
+  testImplementation("ac.intave:samples:0.0.8")
+  testImplementation("ac.intave:cloud-protocol:0.0.4") { isTransitive = false }
+
+  // random shit[
   compileOnly("org.jetbrains:annotations:23.1.0")
   compileOnly("it.unimi.dsi:fastutil:8.5.12")
-
-  // smile
-  compileOnly("com.github.haifengl:smile-base:3.0.1")
-  compileOnly("com.github.haifengl:smile-core:3.0.1")
-
-  // add bytedeco
-  compileOnly("org.bytedeco:openblas:0.3.23-1.5.9")
-  compileOnly("org.bytedeco:openblas-platform:0.3.23-1.5.9")
-  compileOnly("org.bytedeco:javacpp:1.5.9")
-  compileOnly("org.bytedeco:javacpp-presets:1.5.9")
 
   compileOnly("org.spigotmc:spigot-api:1.21.1-R0.1-SNAPSHOT")
 
   // bytebuddy
   compileOnly("net.bytebuddy:byte-buddy:1.18.2")
+
+  // Loaded by Libraries.setupLibraries() when the plugin starts.
+  compileOnly("org.bouncycastle:bcpkix-jdk18on:1.85")
+  compileOnly("com.github.luben:zstd-jni:1.5.7-12")
+  testImplementation("org.bouncycastle:bcpkix-jdk18on:1.85")
+  testImplementation("com.github.luben:zstd-jni:1.5.7-12")
 
   // floodgate
   compileOnly("org.geysermc.floodgate:api:2.0-SNAPSHOT")
@@ -174,18 +187,12 @@ bukkit {
 }
 
 /*
- * Intave Gradle Tasks
+ * Special-purpose server runs
  */
 
-tasks.register("production") {
-  group = "deploy"
-  dependsOn(tasks.build)
-  buildConfigFieldSafe("boolean", "PRODUCTION", "true")
-  dumpBuildConfig()
-}
-
-tasks.register<RunServer>("authtest") {
-  group = "intave"
+tasks.register<RunServer>("runAuthTest1_8_8") {
+  group = IntaveTaskGroups.SERVER_RUNS
+  description = "Runs the authentication test server on Minecraft 1.8.8"
   dependsOn(tasks.build)
   buildConfigFieldSafe("boolean", "PRODUCTION", "true")
   buildConfigFieldSafe("boolean", "AUTHTEST", "true")
@@ -203,8 +210,9 @@ tasks.register<RunServer>("authtest") {
   )
 }
 
-tasks.register<RunServer>("gommetest") {
-  group = "intave"
+tasks.register<RunServer>("runGommeTest1_8_8") {
+  group = IntaveTaskGroups.SERVER_RUNS
+  description = "Runs the Gomme test server on Minecraft 1.8.8"
   dependsOn(tasks.build)
   buildConfigFieldSafe("boolean", "GOMME", "true")
   dumpBuildConfig()
@@ -222,8 +230,9 @@ tasks.register<RunServer>("gommetest") {
 }
 
 
-tasks.register<RunServer>("authtest_1.20.1") {
-  group = "intave"
+tasks.register<RunServer>("runAuthTest1_20_1") {
+  group = IntaveTaskGroups.SERVER_RUNS
+  description = "Runs the authentication test server on Minecraft 1.20.1"
   dependsOn(tasks.build)
   buildConfigFieldSafe("boolean", "PRODUCTION", "true")
   buildConfigFieldSafe("boolean", "AUTHTEST", "true")
@@ -239,13 +248,6 @@ tasks.register<RunServer>("authtest_1.20.1") {
       languageVersion.set(JavaLanguageVersion.of(17))
     }
   )
-}
-
-tasks.register("gomme") {
-  group = "deploy"
-  dependsOn(tasks.build)
-  buildConfigFieldSafe("boolean", "GOMME", "true")
-  dumpBuildConfig()
 }
 
 /*
@@ -384,16 +386,39 @@ run {
   foliaRunConfigs.forEach { (server, java) ->
     registerFoliaRunTask(server, java)
   }
+  registerLeafRunTask(
+    serverVersion = "1.21.8",
+    build = 175,
+    javaVersion = 21,
+    expectedSha256 = "6b12678404efd09b353911df60a09724d4732a25725168e77b72e5d07a35378e",
+  )
   mcpRebornClientConfigs.forEach { (client, config) ->
     run {
       registerMcpRebornClientTasks(client, config)
     }
   }
 
-  tasks.register("build_all_clients") {
-    group = simpleName
+  tasks.register("buildAllClients") {
+    group = IntaveTaskGroups.CLIENTS
     description = "Builds every explicitly configured MCP-Reborn client"
-    dependsOn(mcpRebornClientConfigs.keys.map { "build_${it}_client" })
+    dependsOn(mcpRebornClientConfigs.keys.map { "buildClient${it.taskSuffix()}" })
+  }
+}
+
+fun String.taskSuffix(): String = replace(".", "_").replace("-", "_")
+
+fun sha256(file: File): String {
+  val digest = MessageDigest.getInstance("SHA-256")
+  file.inputStream().buffered().use { input ->
+    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    while (true) {
+      val count = input.read(buffer)
+      if (count < 0) break
+      digest.update(buffer, 0, count)
+    }
+  }
+  return digest.digest().joinToString("") {
+    (it.toInt() and 0xff).toString(16).padStart(2, '0')
   }
 }
 
@@ -406,7 +431,7 @@ fun registerMcpRebornClientTasks(
   minecraftVersion: String,
   clientConfig: McpRebornClientConfig,
 ) {
-  val taskSuffix = minecraftVersion.replace(".", "_").replace("-", "_")
+  val taskSuffix = minecraftVersion.taskSuffix()
   val clientDirectory = layout.projectDirectory.dir("client/$minecraftVersion").asFile
   val clientBuildFile = clientDirectory.resolve("build.gradle")
   val clientGitDirectory = clientDirectory.resolve(".git")
@@ -493,17 +518,17 @@ fun registerMcpRebornClientTasks(
   }
 
   val buildTask = registerMcpRebornGradleTask(
-    "build_${minecraftVersion}_client", "Builds the Minecraft $minecraftVersion client",
+    "buildClient$taskSuffix", "Builds the Minecraft $minecraftVersion client",
     setupTask, clientDirectory, clientConfig, "build",
   ) {
-    group = simpleName
+    group = IntaveTaskGroups.CLIENTS
   }
 
   registerMcpRebornGradleTask(
-    "run_${minecraftVersion}_client", "Runs the Minecraft $minecraftVersion client",
+    "runClient$taskSuffix", "Runs the Minecraft $minecraftVersion client",
     buildTask, clientDirectory, clientConfig, "runclient",
   ) {
-    group = simpleName
+    group = IntaveTaskGroups.CLIENTS
   }
 }
 
@@ -625,8 +650,9 @@ fun isMcpRebornOrigin(origin: String): Boolean {
 }
 
 fun registerPaperTestTask(serverVersion: String, javaVersion: Int) {
-  tasks.register<RunServer>("test_${serverVersion}") {
-    group = simpleName
+  tasks.register<RunServer>("testPaper${serverVersion.taskSuffix()}") {
+    group = IntaveTaskGroups.SERVER_TESTS
+    description = "Runs the Intave server test on Paper $serverVersion"
     dependsOn("shadowJar")
     pluginJars.from("build/libs/$simpleName.jar")
     minecraftVersion(serverVersion)
@@ -656,15 +682,17 @@ run {
 }
 
 fun registerTestAllTask() {
-  tasks.register("test_all") {
-    group = simpleName
-    dependsOn(paperRunConfigs.keys.map { "test_$it" })
+  tasks.register("testAllPaperVersions") {
+    group = IntaveTaskGroups.SERVER_TESTS
+    description = "Runs the Intave server test on every configured Paper version"
+    dependsOn(paperRunConfigs.keys.map { "testPaper${it.taskSuffix()}" })
   }
 }
 
 fun registerPaperRunTask(serverVersion: String, javaVersion: Int) {
-  tasks.register<RunServer>("run_${serverVersion}") {
-    group = simpleName
+  tasks.register<RunServer>("runPaper${serverVersion.taskSuffix()}") {
+    group = IntaveTaskGroups.SERVER_RUNS
+    description = "Runs Intave on Paper $serverVersion"
     dependsOn("shadowJar")
     pluginJars.from("build/libs/$simpleName.jar")
     minecraftVersion(serverVersion)
@@ -679,8 +707,8 @@ fun registerPaperRunTask(serverVersion: String, javaVersion: Int) {
       serverJar(File("libs/servers/paper-1.21.7-15.jar"))
     }
     downloadPlugins {
-      modrinth("viaversion", "5.9.1")
-      modrinth("viabackwards", "5.9.1")
+      modrinth("viaversion", "5.11.0")
+      modrinth("viabackwards", "5.11.0")
     }
     runDirectory(File("runs/paper_${serverVersion}-j$javaVersion"))
     jvmArgs("-Dcom.mojang.eula.agree=true")
@@ -696,8 +724,8 @@ fun registerPaperRunTask(serverVersion: String, javaVersion: Int) {
 
 fun registerFoliaRunTask(serverVersion: String, javaVersion: Int) {
   runPaper.folia.registerTask({
-//    name = "run_folia_$serverVersion"
-    group = simpleName
+    group = IntaveTaskGroups.SERVER_RUNS
+    description = "Runs Intave on Folia $serverVersion"
     dependsOn("shadowJar")
     pluginJars.from("build/libs/$simpleName.jar")
     minecraftVersion(serverVersion)
@@ -710,6 +738,83 @@ fun registerFoliaRunTask(serverVersion: String, javaVersion: Int) {
       }
     )
   });
+}
+
+fun registerLeafRunTask(
+  serverVersion: String,
+  build: Int,
+  javaVersion: Int,
+  expectedSha256: String,
+) {
+  val taskSuffix = serverVersion.taskSuffix()
+  val jarName = "leaf-$serverVersion-$build.jar"
+  val downloadUrl =
+    "https://github.com/Winds-Studio/Leaf/releases/download/ver-$serverVersion/$jarName"
+  val leafServerJar = layout.projectDirectory.file(".gradle/run-leaf/$jarName")
+
+  val downloadTask = tasks.register("downloadLeaf$taskSuffix") {
+    description = "Downloads and verifies Leaf $serverVersion build $build"
+    inputs.property("downloadUrl", downloadUrl)
+    inputs.property("sha256", expectedSha256)
+    outputs.file(leafServerJar)
+    outputs.upToDateWhen {
+      val serverJar = leafServerJar.asFile
+      serverJar.isFile && sha256(serverJar) == expectedSha256
+    }
+
+    doLast {
+      val serverJar = leafServerJar.asFile
+      val partialJar = serverJar.resolveSibling("${serverJar.name}.part")
+      serverJar.parentFile.mkdirs()
+      partialJar.delete()
+
+      try {
+        val connection = URI(downloadUrl).toURL().openConnection().apply {
+          connectTimeout = 30_000
+          readTimeout = 60_000
+          setRequestProperty("User-Agent", "Gradle")
+        }
+        connection.getInputStream().buffered().use { input ->
+          partialJar.outputStream().buffered().use { output -> input.copyTo(output) }
+        }
+
+        val actualSha256 = sha256(partialJar)
+        if (actualSha256 != expectedSha256) {
+          throw GradleException(
+            "Checksum mismatch for $jarName: expected $expectedSha256, got $actualSha256"
+          )
+        }
+        Files.move(
+          partialJar.toPath(),
+          serverJar.toPath(),
+          StandardCopyOption.REPLACE_EXISTING,
+        )
+      } finally {
+        partialJar.delete()
+      }
+    }
+  }
+
+  tasks.register<RunServer>("runLeaf$taskSuffix") {
+    group = IntaveTaskGroups.SERVER_RUNS
+    description = "Runs Intave on Leaf $serverVersion build $build"
+    dependsOn("shadowJar", downloadTask)
+    pluginJars.from("build/libs/$simpleName.jar")
+    minecraftVersion(serverVersion)
+    serverJar(leafServerJar.asFile)
+    downloadPlugins {
+      modrinth("viaversion", "5.11.0")
+      modrinth("viabackwards", "5.11.0")
+    }
+    runDirectory(File("runs/leaf_${serverVersion}-j$javaVersion"))
+    jvmArgs("-Dcom.mojang.eula.agree=true")
+    args("-o", "false")
+    javaLauncher.set(
+      project.javaToolchains.launcherFor {
+        languageVersion.set(JavaLanguageVersion.of(javaVersion))
+      }
+    )
+  }
 }
 
 /*
@@ -750,5 +855,20 @@ tasks {
   test {
     useJUnitPlatform()
     failOnNoDiscoveredTests = false
+  }
+
+  jacocoTestReport {
+    dependsOn(test)
+    reports {
+      html.required.set(true)
+      xml.required.set(true)
+      csv.required.set(true)
+    }
+  }
+
+  register("testCoverage") {
+    group = "verification"
+    description = "Runs the test suite and generates a JaCoCo coverage report."
+    dependsOn(jacocoTestReport)
   }
 }

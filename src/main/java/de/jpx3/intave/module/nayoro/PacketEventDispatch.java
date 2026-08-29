@@ -11,6 +11,10 @@
 
 package de.jpx3.intave.module.nayoro;
 
+import ac.intave.samples.event.*;
+import ac.intave.samples.share.Position;
+import ac.intave.samples.share.Rotation;
+import ac.intave.samples.share.SlotUpdate;
 import com.comphenix.protocol.events.PacketContainer;
 import com.comphenix.protocol.events.PacketEvent;
 import com.comphenix.protocol.wrappers.EnumWrappers;
@@ -18,8 +22,6 @@ import de.jpx3.intave.module.linker.packet.ListenerPriority;
 import de.jpx3.intave.module.linker.packet.PacketEventSubscriber;
 import de.jpx3.intave.module.linker.packet.PacketId;
 import de.jpx3.intave.module.linker.packet.PacketSubscription;
-import de.jpx3.intave.module.nayoro.event.*;
-import de.jpx3.intave.module.nayoro.event.sink.EventSink;
 import de.jpx3.intave.packet.reader.*;
 import de.jpx3.intave.user.User;
 import de.jpx3.intave.user.UserRepository;
@@ -28,8 +30,8 @@ import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
+import java.util.Collections;
 import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 
 import static de.jpx3.intave.check.movement.physics.environment.MoveMetric.TELEPORT;
 import static de.jpx3.intave.module.linker.packet.ListenerPriority.LOWEST;
@@ -37,14 +39,12 @@ import static de.jpx3.intave.module.linker.packet.PacketId.Client.*;
 import static de.jpx3.intave.module.linker.packet.PacketId.Client.POSITION;
 import static de.jpx3.intave.module.linker.packet.PacketId.Client.VEHICLE_MOVE;
 import static de.jpx3.intave.module.linker.packet.PacketId.Server.*;
-import static de.jpx3.intave.module.nayoro.event.WindowActionEvent.Action.CLOSE;
-import static de.jpx3.intave.module.nayoro.event.WindowActionEvent.Action.INFER_OPEN;
 
 public final class PacketEventDispatch implements PacketEventSubscriber {
-  private final BiConsumer<? super User, Consumer<EventSink>> reverseSink;
+  private final BiConsumer<? super User, ? super Event> eventEmitter;
 
-  public PacketEventDispatch(BiConsumer<? super User, Consumer<EventSink>> sinkCallback) {
-    this.reverseSink = sinkCallback;
+  public PacketEventDispatch(BiConsumer<? super User, ? super Event> eventEmitter) {
+    this.eventEmitter = eventEmitter;
   }
 
   @PacketSubscription(
@@ -55,8 +55,9 @@ public final class PacketEventDispatch implements PacketEventSubscriber {
   public void onClick(PacketEvent event) {
     Player player = event.getPlayer();
     User user = UserRepository.userOf(player);
-    ClickEvent clickEvent = ClickEvent.create();
-    reverseSink.accept(user, clickEvent::accept);
+    // The samples factory returns a shared singleton, but recording offsets are event-local.
+    ClickEvent clickEvent = new ClickEvent();
+    eventEmitter.accept(user, clickEvent);
   }
 
   @PacketSubscription(
@@ -75,7 +76,7 @@ public final class PacketEventDispatch implements PacketEventSubscriber {
       int attackerId = player.getEntityId();
       int targetId = reader.entityId();
       AttackEvent attackEvent = AttackEvent.create(attackerId, targetId);
-      reverseSink.accept(user, attackEvent::accept);
+      eventEmitter.accept(user, attackEvent);
     }
     reader.release();
   }
@@ -93,13 +94,8 @@ public final class PacketEventDispatch implements PacketEventSubscriber {
     double x = movement.positionX;
     double y = movement.positionY;
     double z = movement.positionZ;
-    double lastX = movement.lastPositionX;
-    double lastY = movement.lastPositionY;
-    double lastZ = movement.lastPositionZ;
     float yaw = movement.rotationYaw;
     float pitch = movement.rotationPitch;
-    float lastYaw = movement.lastRotationYaw;
-    float lastPitch = movement.lastRotationPitch;
     int keyStrafe = movement.keyStrafe;
     int keyForward = movement.keyForward;
 
@@ -113,26 +109,23 @@ public final class PacketEventDispatch implements PacketEventSubscriber {
     boolean recentlyTeleported = movement.ticksPast(TELEPORT) <= 3;
     boolean jumped = movement.physicsJumped;
 
-    int movementFlags = 0;
-    movementFlags |= collidedHorizontally ? 1 : 0;
-    movementFlags |= collidedVertically ? 2 : 0;
-    movementFlags |= inWater ? 4 : 0;
-    movementFlags |= inLava ? 8 : 0;
-    movementFlags |= inVehicle ? 16 : 0;
-    movementFlags |= sneaking ? 32 : 0;
-    movementFlags |= recentlyTeleported ? 64 : 0;
-    movementFlags |= jumped ? 128 : 0;
-
     PlayerMoveEvent movementEvent = PlayerMoveEvent.create(
       keyStrafe, keyForward,
-      x, y, z,
-      yaw, pitch,
-      lastX, lastY, lastZ,
-      lastYaw, lastPitch,
-      movementFlags,
-      movement.recordedMoves++ % 200 == 0
+      new Position(x, y, z), new Rotation(yaw, pitch),
+      collidedHorizontally, collidedVertically, inWater, inLava,
+      inVehicle, sneaking, recentlyTeleported, jumped
     );
-    reverseSink.accept(user, movementEvent::accept);
+    eventEmitter.accept(user, movementEvent);
+  }
+
+  @PacketSubscription(
+    priority = ListenerPriority.MONITOR,
+    packetsIn = {
+      CLIENT_TICK_END
+    }
+  )
+  public void receiveClientTickEnd(User user) {
+    eventEmitter.accept(user, new ClientTickEndEvent());
   }
 
   @PacketSubscription(
@@ -158,7 +151,27 @@ public final class PacketEventDispatch implements PacketEventSubscriber {
     SlotSwitchEvent slotSwitchEvent = SlotSwitchEvent.create(
       slot, type.name(), amount
     );
-    reverseSink.accept(user, slotSwitchEvent::accept);
+    eventEmitter.accept(user, slotSwitchEvent);
+    eventEmitter.accept(user, InventoryActionEvent.simple(
+      0, InventoryActionEvent.Action.SELECT_HOTBAR, -1, slot, null
+    ));
+  }
+
+  @PacketSubscription(
+    priority = ListenerPriority.HIGH,
+    packetsIn = {
+      CLIENT_COMMAND
+    }
+  )
+  public void receiveClientInventoryOpen(User user, PacketContainer packet) {
+    EnumWrappers.ClientCommand command = packet.getClientCommands().readSafely(0);
+    if (command != EnumWrappers.ClientCommand.OPEN_INVENTORY_ACHIEVEMENT
+      || user.meta().connection().assumeWindowOpen) {
+      return;
+    }
+    user.meta().connection().assumeWindowOpen = true;
+    user.meta().connection().assumedWindowId = 0;
+    eventEmitter.accept(user, new InventoryOpenEvent(0, "minecraft:inventory", false));
   }
 
   @PacketSubscription(
@@ -173,13 +186,18 @@ public final class PacketEventDispatch implements PacketEventSubscriber {
     boolean assumeWindowOpen = user.meta().connection().assumeWindowOpen;
     if (!assumeWindowOpen) {
       user.meta().connection().assumeWindowOpen = true;
-      WindowActionEvent openEvent = WindowActionEvent.create(INFER_OPEN, user.player().getInventory().getArmorContents());
-      reverseSink.accept(user, openEvent::accept);
+      user.meta().connection().assumedWindowId = reader.containerId();
+      InventoryOpenEvent openEvent = new InventoryOpenEvent(
+        reader.containerId(), reader.containerId() == 0 ? "minecraft:inventory" : "unknown", true
+      );
+      eventEmitter.accept(user, openEvent);
     }
-    WindowClickEvent clickEvent = WindowClickEvent.create(
-      reader.containerId(), reader.slot(), reader.clickType().ordinal(), reader.button(), reader.actionNumber()
+    InventoryActionEvent clickEvent = new InventoryActionEvent(
+      reader.containerId(), reader.action(), reader.slot(), reader.button(), reader.revision(),
+      SampleTypes.slotUpdates(reader.predictedSlots()),
+      reader.carriedItemKnown(), SampleTypes.nullableItem(reader.carriedItem())
     );
-    reverseSink.accept(user, clickEvent::accept);
+    eventEmitter.accept(user, clickEvent);
   }
 
   @PacketSubscription(
@@ -189,24 +207,50 @@ public final class PacketEventDispatch implements PacketEventSubscriber {
     }
   )
   public void receiveWindowClose(PacketEvent event) {
-    Player player = event.getPlayer();
-    User user = UserRepository.userOf(player);
-    WindowActionEvent closeEvent = WindowActionEvent.create(CLOSE, user.player().getInventory().getArmorContents());
-    reverseSink.accept(user, closeEvent::accept);
+    User user = UserRepository.userOf(event.getPlayer());
+    int containerId = event.getPacket().getIntegers().readSafely(0);
+    eventEmitter.accept(user, new InventoryCloseEvent(
+      containerId, InventoryCloseEvent.Source.CLIENT
+    ));
     user.meta().connection().assumeWindowOpen = false;
+    user.meta().connection().assumedWindowId = 0;
   }
 
   @PacketSubscription(
     priority = ListenerPriority.HIGH,
     packetsOut = {
-      OPEN_WINDOW
+      PacketId.Server.CLOSE_WINDOW
+    }
+  )
+  public void sentWindowClose(User user, WindowIdReader reader) {
+    eventEmitter.accept(user, new InventoryCloseEvent(
+      reader.containerId(), InventoryCloseEvent.Source.SERVER
+    ));
+    user.meta().connection().assumeWindowOpen = false;
+    user.meta().connection().assumedWindowId = 0;
+  }
+
+  @PacketSubscription(
+    priority = ListenerPriority.HIGH,
+    packetsOut = {
+      OPEN_WINDOW, OPEN_WINDOW_HORSE
     }
   )
   public void sentWindowOpen(
     User user, WindowOpenReader reader
   ) {
-    int slots = reader.slots();
-    user.meta().connection().nextWindowOpenSlots = slots;
+    int containerId = reader.containerId();
+    if (user.meta().connection().assumeWindowOpen
+      && user.meta().connection().assumedWindowId != containerId) {
+      eventEmitter.accept(user, new InventoryCloseEvent(
+        user.meta().connection().assumedWindowId, InventoryCloseEvent.Source.INFERRED
+      ));
+    }
+    user.meta().connection().assumeWindowOpen = true;
+    user.meta().connection().assumedWindowId = containerId;
+    eventEmitter.accept(user, new InventoryOpenEvent(
+      containerId, reader.menuType(), false
+    ));
   }
 
   @PacketSubscription(
@@ -218,20 +262,101 @@ public final class PacketEventDispatch implements PacketEventSubscriber {
   public void sendWindowItems(
     User user, WindowItemReader reader
   ) {
-    int container = reader.windowId();
-    int slots = user.meta().connection().nextWindowOpenSlots;
-    if (slots == 0) {
-      slots = 9 * 3;
-    }
-    if (container != 0) {
-      user.meta().connection().nextWindowOpenSlots = 0;
-    }
+    int packetContainer = reader.windowId();
+    int container = packetContainer == -1 && user.meta().connection().assumeWindowOpen
+      ? user.meta().connection().assumedWindowId
+      : packetContainer < 0 ? 0 : packetContainer;
+    InventoryUpdateEvent event = new InventoryUpdateEvent(
+      container, reader.full(), reader.revision(),
+      SampleTypes.slotUpdates(reader.itemMap()),
+      reader.carriedItemKnown(), SampleTypes.nullableItem(reader.carriedItem())
+    );
+    eventEmitter.accept(user, event);
+  }
 
-    // inventory
-    slots += 4 * 9;
-//    System.out.println("Sent window items: " + slots);
-//    Map<Integer, ItemStack> items = reader.itemMap();
-//    WindowItemsEvent event = WindowItemsEvent.create(container, slots, items);
-//    reverseSink.accept(user, event::accept);
+  @PacketSubscription(
+    priority = ListenerPriority.HIGH,
+    packetsIn = {
+      BLOCK_DIG
+    }
+  )
+  public void receiveHeldItemAction(User user, BlockDigReader reader) {
+    InventoryActionEvent.Action action;
+    EnumWrappers.PlayerDigType digType = reader.action();
+    if (digType == EnumWrappers.PlayerDigType.DROP_ITEM) {
+      action = InventoryActionEvent.Action.DROP_HELD_ONE;
+    } else if (digType == EnumWrappers.PlayerDigType.DROP_ALL_ITEMS) {
+      action = InventoryActionEvent.Action.DROP_HELD_STACK;
+    } else if (digType == EnumWrappers.PlayerDigType.SWAP_HELD_ITEMS) {
+      action = InventoryActionEvent.Action.SWAP_HANDS;
+    } else {
+      return;
+    }
+    eventEmitter.accept(user, InventoryActionEvent.simple(0, action, -1, -1, null));
+  }
+
+  @PacketSubscription(
+    priority = ListenerPriority.HIGH,
+    packetsIn = {
+      SET_CREATIVE_SLOT
+    }
+  )
+  public void receiveCreativeSlot(User user, PacketContainer packet) {
+    Integer slot = packet.getIntegers().readSafely(0);
+    if (slot == null) {
+      Short shortSlot = packet.getShorts().readSafely(0);
+      slot = shortSlot == null ? -1 : shortSlot.intValue();
+    }
+    ItemStack item = packet.getItemModifier().readSafely(0);
+    InventoryActionEvent.Action action = slot < 0
+      ? InventoryActionEvent.Action.CREATIVE_DROP
+      : InventoryActionEvent.Action.CREATIVE_SET_SLOT;
+    eventEmitter.accept(user, new InventoryActionEvent(
+      0, action, slot, -1, null,
+      Collections.singletonList(new SlotUpdate(slot, SampleTypes.nullableItem(item))),
+      false, null
+    ));
+  }
+
+  @PacketSubscription(
+    priority = ListenerPriority.HIGH,
+    packetsIn = {
+      ENCHANT_ITEM
+    }
+  )
+  public void receiveMenuButton(User user, PacketContainer packet) {
+    int containerId = packet.getIntegers().readSafely(0);
+    int button = packet.getIntegers().readSafely(1);
+    eventEmitter.accept(user, InventoryActionEvent.simple(
+      containerId, InventoryActionEvent.Action.MENU_BUTTON, -1, button, null
+    ));
+  }
+
+  @PacketSubscription(
+    priority = ListenerPriority.HIGH,
+    packetsIn = {
+      PacketId.Client.AUTO_RECIPE
+    }
+  )
+  public void receivePlaceRecipe(User user, PacketContainer packet) {
+    int containerId = packet.getIntegers().readSafely(0);
+    Boolean placeAll = packet.getBooleans().readSafely(0);
+    eventEmitter.accept(user, InventoryActionEvent.simple(
+      containerId, InventoryActionEvent.Action.PLACE_RECIPE, -1,
+      Boolean.TRUE.equals(placeAll) ? 1 : 0, null
+    ));
+  }
+
+  @PacketSubscription(
+    priority = ListenerPriority.HIGH,
+    packetsIn = {
+      PICK_ITEM
+    }
+  )
+  public void receivePickItem(User user, PacketContainer packet) {
+    int slot = packet.getIntegers().readSafely(0);
+    eventEmitter.accept(user, InventoryActionEvent.simple(
+      0, InventoryActionEvent.Action.PICK_ITEM, slot, -1, null
+    ));
   }
 }

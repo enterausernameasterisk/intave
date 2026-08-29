@@ -21,6 +21,7 @@ import de.jpx3.intave.block.collision.Collision;
 import de.jpx3.intave.block.fluid.Fluid;
 import de.jpx3.intave.block.physics.BlockProperties;
 import de.jpx3.intave.block.tick.ShulkerBox;
+import de.jpx3.intave.block.tick.piston.PistonSlimeMovement;
 import de.jpx3.intave.block.type.BlockTypeAccess;
 import de.jpx3.intave.check.movement.physics.config.MovementConfiguration;
 import de.jpx3.intave.check.movement.physics.environment.*;
@@ -34,6 +35,7 @@ import de.jpx3.intave.check.world.interaction.BlockTrustChain;
 import de.jpx3.intave.executor.RateLimiter;
 import de.jpx3.intave.executor.Synchronizer;
 import de.jpx3.intave.math.MathHelper;
+import de.jpx3.intave.module.Modules;
 import de.jpx3.intave.module.tracker.entity.Entity;
 import de.jpx3.intave.packet.Relative;
 import de.jpx3.intave.player.Effects;
@@ -56,6 +58,7 @@ import org.jetbrains.annotations.NotNull;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -100,7 +103,6 @@ public final class MovementMetadata implements SimulationEnvironment {
   public boolean acceptSneakFaults = true;
   public float rotationYaw, rotationPitch;
   public float lastRotationYaw, lastRotationPitch;
-  public long recordedMoves;
   public long invalidVehiclePositionTicks = 0;
   // Timestamps
   public long lastTimeSneaking, lastTimeJumped, lastRotation;
@@ -128,6 +130,8 @@ public final class MovementMetadata implements SimulationEnvironment {
   public double baseMotionX, baseMotionY, baseMotionZ; // base or last motion, exclusively for the physics check
   public double baseMotionXBeforeVelocity, baseMotionYBeforeVelocity, baseMotionZBeforeVelocity;
   private List<PostTickSimulation> postTickSimulations = Collections.emptyList();
+  private List<PistonSlimeMovement> pistonSlimeMovements = Collections.emptyList();
+  private Map<BlockPosition, ShulkerBox> shulkerBoxes = Collections.emptyMap();
   public double endMotionXOverride = Double.NaN, endMotionYOverride = Double.NaN, endMotionZOverride = Double.NaN;
   public int highestLocalRiptideLevel = 0;
   public boolean physicsResetMotionX, physicsResetMotionZ;
@@ -142,9 +146,6 @@ public final class MovementMetadata implements SimulationEnvironment {
   public double pistonHorizontalAllowance;
   public double pistonVerticalAllowance;
   public BoundingBox pistonCollisionArea;
-  public List<BlockPosition> shulkers = new ArrayList<>();
-  public Map<BlockPosition, ShulkerBox> shulkerData = new HashMap<>();
-  public Map<Integer, ShulkerBox> shulkerDataHashCodeAccess = new HashMap<>();
   // Will be set to true if the player sends a flying packet and receives server velocity later
   public boolean physicsUnpredictableVelocityExpected;
   // Jump prevention
@@ -246,6 +247,9 @@ public final class MovementMetadata implements SimulationEnvironment {
       pastTracker.put(value, value.pastDefault());
     }
   }
+
+  public LongAdder activeTicks = new LongAdder();
+  public LongAdder passiveTicks = new LongAdder();
 
   public SimulationEnvironment beforePreviousTickEnvironment;
 
@@ -739,19 +743,6 @@ public final class MovementMetadata implements SimulationEnvironment {
   }
 
   @Override
-  public ShulkerBox shulkerBoxAt(int posX, int posY, int posZ) {
-    if (shulkerData.isEmpty()) {
-      return null;
-    }
-    int positionHash = posX << 12 | posY << 8 | posZ;
-    ShulkerBox shulkerBox = shulkerDataHashCodeAccess.get(positionHash);
-    if (shulkerBox != null) {
-      return shulkerBox;
-    }
-    return shulkerData.get(new BlockPosition(posX, posY, posZ));
-  }
-
-  @Override
   public void activeTick(MoveMetric metric) {
     activeTracker.put(metric, ticks(metric) + 1);
     pastTracker.put(metric, 0);
@@ -879,8 +870,11 @@ public final class MovementMetadata implements SimulationEnvironment {
         return false;
       });
     }
-
     // </performance>
+    // <analytics>
+    boolean active = simulation.configuration().anyKeypress() || simulation.environment().rotated();
+    (active ? activeTicks : passiveTicks).increment();
+	  // </analytics>
     setLastMovementConfiguration(configuration);
     setSimulationResult(collider);
   }
@@ -906,6 +900,9 @@ public final class MovementMetadata implements SimulationEnvironment {
     if (isRealClientTick) {
       currentTick++;
       tickAmbiguousUpdates.removeIf(tau -> tau.expired(this));
+      if (!pistonSlimeMovements.isEmpty()) {
+        pistonSlimeMovements.removeIf(movement -> movement.expired(currentTick));
+      }
       worldBorder.tick();
     }
 
@@ -976,7 +973,6 @@ public final class MovementMetadata implements SimulationEnvironment {
       lastTimeJumped = System.currentTimeMillis();
     }
 
-    shulkerCleanup();
   }
 
   @Override
@@ -1038,30 +1034,6 @@ public final class MovementMetadata implements SimulationEnvironment {
   @Override
   public void setOnGroundNoBlocks(boolean onGroundNoBlocks) {
     this.onGroundNoBlocks = onGroundNoBlocks;
-  }
-
-  private void shulkerCleanup() {
-    if (!shulkerData.isEmpty()) {
-      int shulkerLimit = 2048;
-      for (Iterator<BlockPosition> iterator = shulkers.iterator(); iterator.hasNext(); ) {
-        if (shulkerLimit-- <= 0) {
-          break;
-        }
-        BlockPosition shulkerBlock = iterator.next();
-        ShulkerBox shulkerBox = shulkerData.get(shulkerBlock);
-        if (shulkerBox == null) {
-          iterator.remove();
-          continue;
-        }
-        if (shulkerBox.complete()) {
-          iterator.remove();
-          shulkerData.remove(shulkerBlock);
-          shulkerDataHashCodeAccess.remove(shulkerBox.hashCode());
-        } else if (shulkerBox.shouldTick()) {
-          shulkerBox.tick();
-        }
-      }
-    }
   }
 
   @Override
@@ -1149,6 +1121,30 @@ public final class MovementMetadata implements SimulationEnvironment {
   @Override
   public void setPostTickMotionCandidates(@NotNull List<PostTickSimulation> postTickSimulations) {
     this.postTickSimulations = new ArrayList<>(postTickSimulations);
+  }
+
+  @Override
+  public List<PistonSlimeMovement> pistonSlimeMovements() {
+    return pistonSlimeMovements.isEmpty()
+      ? Collections.emptyList()
+      : Collections.unmodifiableList(pistonSlimeMovements);
+  }
+
+  @Override
+  public void setPistonSlimeMovements(@NotNull List<PistonSlimeMovement> pistonSlimeMovements) {
+    this.pistonSlimeMovements = new ArrayList<>(pistonSlimeMovements);
+  }
+
+  @Override
+  public Map<BlockPosition, ShulkerBox> shulkerBoxes() {
+    return shulkerBoxes.isEmpty()
+      ? Collections.emptyMap()
+      : Collections.unmodifiableMap(shulkerBoxes);
+  }
+
+  @Override
+  public void setShulkerBoxes(@NotNull Map<BlockPosition, ShulkerBox> shulkerBoxes) {
+    this.shulkerBoxes = new LinkedHashMap<>(shulkerBoxes);
   }
 
   @Override
@@ -1258,6 +1254,7 @@ public final class MovementMetadata implements SimulationEnvironment {
     }
   }
 
+  /** Restores combat and item-use timing inputs that are consumed directly by movement search. */
   public void restoreRecordedCombatState(
     int reduceTicks,
     int attackReduceTicksPast,
@@ -1760,7 +1757,14 @@ public final class MovementMetadata implements SimulationEnvironment {
     if (positionReset) {
       Synchronizer.synchronize(() -> {
         // player.getLocation() is assumed to be correct
-        player.teleport(player.getLocation());
+        Location target = player.getLocation();
+        Modules.tracker().packetLogging().logSystemMessage(user, () ->
+          "TELEPORT ACTION source=VEHICLE_DISMOUNT reason=" + reason + " target=" + target
+        );
+        boolean teleported = player.teleport(target);
+        Modules.tracker().packetLogging().logSystemMessage(user, () ->
+          "TELEPORT ACTION RESULT source=VEHICLE_DISMOUNT accepted=" + teleported
+        );
         if (user.receives(MessageChannel.DEBUG_TELEPORT)) {
           player.sendMessage(IntavePlugin.prefix() + "Teleport to " + player.getLocation().getBlockX() + " " + player.getLocation().getBlockY() + " " + player.getLocation().getBlockZ() + " " + " because " + ChatColor.RED + " you dismounted a vehicle");
         }

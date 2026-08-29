@@ -70,7 +70,7 @@ final class IndexedBlockVariant implements BlockVariant {
     this.variantIndex = variantIndex;
     for (Map.Entry<? extends Setting<?>, Comparable<?>> entry : nativeConfig.entrySet()) {
       Setting<?> setting = entry.getKey();
-      Comparable<?> value = entry.getValue();
+      Comparable<?> value = normalizeProperty(entry.getValue());
       String name = setting.name().toLowerCase(Locale.ROOT);
       namedConfig.put(name, value);
     }
@@ -82,7 +82,11 @@ final class IndexedBlockVariant implements BlockVariant {
   ) {
     this.type = null;
     this.variantIndex = variantIndex;
-    this.namedConfig.putAll(namedConfig);
+    namedConfig.forEach((name, value) -> this.namedConfig.put(name, normalizeProperty(value)));
+  }
+
+  private static Comparable<?> normalizeProperty(Comparable<?> value) {
+    return value instanceof Enum<?> ? ((Enum<?>) value).name() : value;
   }
 
   @Override

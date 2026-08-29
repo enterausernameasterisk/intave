@@ -153,7 +153,6 @@ public class RotationFlick extends PlayerCheckPart<PlacementAnalysis> {
 						.withMessage(COMMON_FLAG_MESSAGE)
 						.withDetails("exhibits micro pitch adjustments")
 						.appendFlags(DISPLAY_IN_ALL_VERBOSE_MODES)
-						.withCustomThreshold(PlacementAnalysis.legacyConfigurationLayout() ? "thresholds" : "cloud-thresholds.on-premise")
 						.withVL(10).build();
 					Modules.violationProcessor().processViolation(violation);
 //          user.meta().violationLevel().lastBlockPlaceDenyRequest = System.currentTimeMillis();

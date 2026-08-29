@@ -630,8 +630,8 @@ MinecraftServer -> {
 
 MinecraftKey -> {
   [1.17-1.20.4] -> "net/minecraft/resources/MinecraftKey"
-  [1.21-1.21.7] -> "net/minecraft/resources/ResourceLocation"
-  [1.21.8-26.2.0] -> "net/minecraft/resources/Identifier"
+  [1.21-1.21.10] -> "net/minecraft/resources/ResourceLocation"
+  [1.21.11-26.2.0] -> "net/minecraft/resources/Identifier"
 }
 
 MovingObjectPosition -> {

@@ -8,8 +8,6 @@ import de.jpx3.intave.check.world.placementanalysis.clicking.Stability;
 import de.jpx3.intave.module.linker.bukkit.BukkitEventSubscription;
 import de.jpx3.intave.user.User;
 import de.jpx3.intave.user.meta.ProtocolMetadata;
-import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.event.block.BlockPlaceEvent;
 
 public final class PlacementAnalysis extends Check {
@@ -59,23 +57,6 @@ public final class PlacementAnalysis extends Check {
   public void on(BlockPlaceEvent place) {
     User user = userOf(place.getPlayer());
     decrementer.decrement(user, 0.1);
-  }
-
-  private static Boolean legacyConfigLayCache = null;
-
-  public static boolean legacyConfigurationLayout() {
-    if (legacyConfigLayCache != null) {
-      return legacyConfigLayCache;
-    }
-    YamlConfiguration settings = IntavePlugin.singletonInstance().settings();
-    ConfigurationSection section = settings.getConfigurationSection("check.placementanalysis.cloud-thresholds.on-premise");
-    if (section != null) {
-//      IntaveLogger.logger().info("Using new placementanalysis format");
-      return legacyConfigLayCache = false;
-    } else {
-//      IntaveLogger.logger().info("Still using old placementanalysis config format");
-      return legacyConfigLayCache = true;
-    }
   }
 
   public void applyPlacementAnalysisDamageCancel(User user, String checkId) {

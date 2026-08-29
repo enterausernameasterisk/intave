@@ -1,8 +1,19 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.module.nayoro;
 
-import de.jpx3.intave.module.nayoro.event.Event;
+import ac.intave.samples.event.Event;
 
-import java.io.DataInputStream;
+import java.io.InputStream;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 
@@ -12,11 +23,11 @@ public final class InstantPlayback extends Playback implements Runnable {
   private boolean interrupted = false;
   private long passedTime = 0;
 
-  public InstantPlayback(DataInputStream stream, Executor executor) {
+  public InstantPlayback(InputStream stream, Executor executor) {
     this(stream, executor, (playback) -> {});
   }
 
-  public InstantPlayback(DataInputStream stream, Executor executor, Consumer<? super Playback> onComplete) {
+  public InstantPlayback(InputStream stream, Executor executor, Consumer<? super Playback> onComplete) {
     super(stream);
     this.executor = executor;
     this.onComplete = onComplete;
@@ -38,7 +49,11 @@ public final class InstantPlayback extends Playback implements Runnable {
         visitSelect(event);
       }
     } finally {
-      onComplete.accept(this);
+      try {
+        closeRecording();
+      } finally {
+        onComplete.accept(this);
+      }
     }
   }
 

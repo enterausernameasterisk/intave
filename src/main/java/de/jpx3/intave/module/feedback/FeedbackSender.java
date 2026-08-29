@@ -151,8 +151,11 @@ public final class FeedbackSender extends Module {
       lock.lock();
       tracedSingleSynchronize(player, target, firstCallback, firstTracker, options);
       user.ignoreNextOutboundPacket();
-      PacketSender.sendServerPacket(player, encapsulate.shallowClone());
-      user.receiveNextOutboundPacketAgain();
+      try {
+        PacketSender.sendServerPacket(player, encapsulate.shallowClone());
+      } finally {
+        user.receiveNextOutboundPacketAgain();
+      }
       tracedSingleSynchronize(player, target, secondCallback, secondTracker, options);
     } finally {
       lock.unlock();
@@ -402,8 +405,11 @@ public final class FeedbackSender extends Module {
       }
       toBundle.setCancelled(true);
       user.ignoreNextOutboundPacket();
-      PacketSender.sendServerPacketWithoutEvent(receiver, bundle);
-      user.receiveNextOutboundPacketAgain();
+      try {
+        PacketSender.sendServerPacketWithoutEvent(receiver, bundle);
+      } finally {
+        user.receiveNextOutboundPacketAgain();
+      }
     } else {
       // with event
       PacketSender.sendServerPacket(receiver, packet);

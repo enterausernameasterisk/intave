@@ -45,7 +45,7 @@ public final class Facing extends CheckPart<PlacementAnalysis> {
 		if (f1 < 0 || f2 < 0 || f3 < 0 || f1 > 1 || f2 > 1 || f3 > 1) {
 			Violation violation = Violation.builderFor(PlacementAnalysis.class)
 				.forPlayer(player).withMessage(COMMON_FLAG_MESSAGE)
-				.withCustomThreshold(PlacementAnalysis.legacyConfigurationLayout() ? "thresholds" : "cloud-thresholds.on-premise")
+				.withDefaultThreshold()
 				.withVL(5).build();
 			Modules.violationProcessor().processViolation(violation);
 			//dmc14

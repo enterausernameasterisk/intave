@@ -1,3 +1,14 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.check;
 
 import com.google.common.collect.ImmutableMap;
@@ -32,15 +43,29 @@ public final class CheckConfiguration {
 
   public static class CheckSettings {
     private final Map<String, Object> access;
-    private final CheckConfiguration configurationCache;
+    private final String configurationKey;
+    private final String checkName;
     private final Map<String, Map<Integer, List<String>>> thresholds = new HashMap<>();
 
     public CheckSettings(
       Map<String, Object> access,
       CheckConfiguration configurationCache
     ) {
+      this(
+        access,
+        configurationCache.check().configurationKey(),
+        configurationCache.check().name()
+      );
+    }
+
+    CheckSettings(
+      Map<String, Object> access,
+      String configurationKey,
+      String checkName
+    ) {
       this.access = ImmutableMap.copyOf(access);
-      this.configurationCache = configurationCache;
+      this.configurationKey = configurationKey;
+      this.checkName = checkName;
     }
 
     public Map<Integer, List<String>> defaultThresholds() {
@@ -51,14 +76,14 @@ public final class CheckConfiguration {
       if (thresholds.containsKey(key)) {
         return thresholds.get(key);
       }
-      ConfigurationSection configurationSection = (ConfigurationSection) access.get(key);
+      ConfigurationSection configurationSection = (ConfigurationSection) uncheckedResolveOrDefault(key, null);
       Map<Integer, List<String>> thresholdMap = new LinkedHashMap<>();
       if (configurationSection == null) {
         return new HashMap<>();
       }
       Set<String> section = configurationSection.getKeys(false);
       if (section == null) {
-        throw new IntaveInternalException("Unable to locate threshold section " + key + " in check " + configurationCache.check().name());
+        throw new IntaveInternalException("Unable to locate threshold section " + key + " in check " + checkName);
       }
       for (String configurationSectionKey : section) {
         List<String> output = new ArrayList<>();
@@ -109,7 +134,7 @@ public final class CheckConfiguration {
         }
         return (boolean) val;
       } catch (ClassCastException exception) {
-        throw new IntaveBootFailureException(new InvalidConfigurationException("Expected " + key + " in check " + configurationCache.check().name() + " to be a boolean expression", exception));
+        throw new IntaveBootFailureException(new InvalidConfigurationException("Expected " + key + " in check " + checkName + " to be a boolean expression", exception));
       }
     }
 
@@ -169,16 +194,33 @@ public final class CheckConfiguration {
       try {
         return (int) uncheckedResolveOrDefault(key, def);
       } catch (ClassCastException exception) {
-        throw new IntaveBootFailureException(new InvalidConfigurationException("Expected " + key + " in check " + configurationCache.check().name() + " to be a numeric expression", exception));
+        throw new IntaveBootFailureException(new InvalidConfigurationException("Expected " + key + " in check " + checkName + " to be a numeric expression", exception));
       }
     }
 
     private Object uncheckedResolveOrDefault(String key, Object def) {
-      return access.getOrDefault(key, def);
+      if (access.containsKey(key)) {
+        return access.get(key);
+      }
+      String legacyKey = legacyKeyFor(key);
+      return legacyKey != null && access.containsKey(legacyKey)
+        ? access.get(legacyKey)
+        : def;
+    }
+
+    private String legacyKeyFor(String key) {
+      if ("heuristics".equals(configurationKey)) {
+        return "classic." + key;
+      }
+      if ("placementanalysis".equals(configurationKey) && "thresholds".equals(key)) {
+        return "cloud-thresholds.on-premise";
+      }
+      return null;
     }
 
     public boolean has(String key) {
-      return access.containsKey(key);
+      String legacyKey = legacyKeyFor(key);
+      return access.containsKey(key) || legacyKey != null && access.containsKey(legacyKey);
     }
   }
 }

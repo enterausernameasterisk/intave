@@ -81,7 +81,6 @@ public final class Stability extends PlayerCheckPart<PlacementAnalysis> {
 						.withMessage(COMMON_FLAG_MESSAGE)
 						.withDetails("clicking stability")
 						.appendFlags(DISPLAY_IN_ALL_VERBOSE_MODES)
-						.withCustomThreshold(PlacementAnalysis.legacyConfigurationLayout() ? "thresholds" : "cloud-thresholds.on-premise")
 						.withVL(2.5).build();
 					Modules.violationProcessor().processViolation(violation);
 

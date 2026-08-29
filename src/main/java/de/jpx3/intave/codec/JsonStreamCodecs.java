@@ -42,6 +42,10 @@ public final class JsonStreamCodecs {
     JsonWriter::value,
     JsonReader::nextInt
   );
+  public static final StreamCodec<JsonReader, JsonWriter, Long> LONG = of(
+    JsonWriter::value,
+    JsonReader::nextLong
+  );
   public static final StreamCodec<JsonReader, JsonWriter, Boolean> BOOLEAN = of(
     JsonWriter::value,
     JsonReader::nextBoolean
@@ -79,6 +83,10 @@ public final class JsonStreamCodecs {
     return field(name, INTEGER, getter, 0);
   }
 
+  public static <T> JsonField<T, Long> longField(String name, Function<T, Long> getter) {
+    return field(name, LONG, getter, 0L);
+  }
+
   public static <T> JsonField<T, Boolean> booleanField(String name, Function<T, Boolean> getter) {
     return field(name, BOOLEAN, getter, false);
   }
@@ -95,6 +103,10 @@ public final class JsonStreamCodecs {
     return field(name, STRING, getter, null);
   }
 
+  public static <T> JsonField<T, UUID> uuidField(String name, Function<T, UUID> getter, UUID defaultValue) {
+    return field(name, STRING.beforeAndAfter(UUID::fromString, UUID::toString), getter, defaultValue);
+  }
+
   public static <T, V> JsonField<T, V> field(
     String name,
     StreamCodec<JsonReader, JsonWriter, V> codec,
@@ -102,6 +114,29 @@ public final class JsonStreamCodecs {
     V defaultValue
   ) {
     return new JsonField<>(name, codec, getter, defaultValue);
+  }
+
+  /**
+   * Creates an object codec without imposing an arity limit on its constructor.
+   * This is preferable for wire-format objects whose schema grows over time.
+   */
+  @SafeVarargs
+  public static <T> JsonObjectCodec<T> object(
+    Function<JsonValues, T> constructor,
+    JsonField<T, ?>... fields
+  ) {
+    List<JsonField<T, ?>> fieldList = Arrays.asList(fields);
+    return objectCodec(fieldList, values -> constructor.apply(new JsonValues(values)));
+  }
+
+  public static <T> StreamCodec<JsonReader, JsonWriter, T> nullable(
+    StreamCodec<JsonReader, JsonWriter, T> codec
+  ) {
+    Objects.requireNonNull(codec, "codec");
+    return of(
+      (writer, value) -> writeNullable(writer, codec, value),
+      reader -> readNullable(reader, codec)
+    );
   }
 
   public static <T, A, B> JsonObjectCodec<T> object(
@@ -551,6 +586,19 @@ public final class JsonStreamCodecs {
       if (fieldIndices.put(name, index) != null) {
         throw new IllegalArgumentException("Duplicate JSON field: " + name);
       }
+    }
+  }
+
+  public static final class JsonValues {
+    private final Object[] values;
+
+    private JsonValues(Object[] values) {
+      this.values = values;
+    }
+
+    @SuppressWarnings("unchecked")
+    public <T> T value(int index) {
+      return (T) values[index];
     }
   }
 

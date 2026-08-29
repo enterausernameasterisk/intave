@@ -27,7 +27,7 @@ public final class BlockProperties {
     Property.builderFor(
       AIR, "CAVE_AIR", "VOID_AIR", "STRUCTURE_VOID",
       WATER, "STATIONARY_WATER", LAVA, "STATIONARY_LAVA",
-      "STAINED_GLASS", GLASS,
+      "MOVING_PISTON", "STAINED_GLASS", GLASS,
       "FIRE", "WEB", "COBWEB", "NETHER_PORTAL", "ENDER_PORTAL",
       // all leaves
       "OAK_LEAVES", "SPRUCE_LEAVES", "BIRCH_LEAVES", "JUNGLE_LEAVES", "ACACIA_LEAVES", "DARK_OAK_LEAVES",

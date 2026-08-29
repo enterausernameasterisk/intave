@@ -1,3 +1,14 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.module.tracker.entity;
 
 import com.comphenix.protocol.events.PacketContainer;
@@ -368,34 +379,25 @@ public class Entity {
   }
 
   public void immediateEntityMovement(PacketContainer packet) {
-    double newPosX;
-    double newPosY;
-    double newPosZ;
     if (POSITION_PROCESSING_1_14) {
       StructureModifier<Short> shorts = packet.getShorts();
-      this.immServerPosX += shorts.readSafely(0);
-      this.immServerPosY += shorts.readSafely(1);
-      this.immServerPosZ += shorts.readSafely(2);
-      newPosX = (double) immServerPosX / 4096d;
-      newPosY = (double) immServerPosY / 4096d;
-      newPosZ = (double) immServerPosZ / 4096d;
+      applyImmediateRelativeMove(shorts.readSafely(0), shorts.readSafely(1), shorts.readSafely(2), 4096d);
     } else if (POSITION_PROCESSING_1_9) {
       StructureModifier<Integer> integers = packet.getIntegers();
-      this.immServerPosX += integers.readSafely(1);
-      this.immServerPosY += integers.readSafely(2);
-      this.immServerPosZ += integers.readSafely(3);
-      newPosX = (double) immServerPosX / 4096d;
-      newPosY = (double) immServerPosY / 4096d;
-      newPosZ = (double) immServerPosZ / 4096d;
+      applyImmediateRelativeMove(integers.readSafely(1), integers.readSafely(2), integers.readSafely(3), 4096d);
     } else {
       StructureModifier<Byte> bytes = packet.getBytes();
-      this.immServerPosX += bytes.readSafely(0);
-      this.immServerPosY += bytes.readSafely(1);
-      this.immServerPosZ += bytes.readSafely(2);
-      newPosX = (double) immServerPosX / 32d;
-      newPosY = (double) immServerPosY / 32d;
-      newPosZ = (double) immServerPosZ / 32d;
+      applyImmediateRelativeMove(bytes.readSafely(0), bytes.readSafely(1), bytes.readSafely(2), 32d);
     }
+  }
+
+  public void applyImmediateRelativeMove(long dx, long dy, long dz, double divisor) {
+    this.immServerPosX += dx;
+    this.immServerPosY += dy;
+    this.immServerPosZ += dz;
+    double newPosX = (double) immServerPosX / divisor;
+    double newPosY = (double) immServerPosY / divisor;
+    double newPosZ = (double) immServerPosZ / divisor;
     immediateServerPosition.setX(newPosX);
     immediateServerPosition.setY(newPosY);
     immediateServerPosition.setZ(newPosZ);
@@ -478,17 +480,9 @@ public class Entity {
     boundingBox = null;
   }
 
-  private synchronized void updatePositionHistory() {
+  private void updatePositionHistory() {
     if (!temporaryCopy) {
-      try {
-//        positionHistoryLock.lock();
-//        if (positionHistory.size() > 25) {
-//          positionHistory.remove(0);
-//        }
-        positionHistory.add(position.clone());
-      } finally {
-//        positionHistoryLock.unlock();
-      }
+      positionHistory.add(position.clone());
     }
   }
 

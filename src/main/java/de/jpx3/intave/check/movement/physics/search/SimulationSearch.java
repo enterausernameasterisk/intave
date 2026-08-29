@@ -22,24 +22,24 @@ import java.util.List;
 import java.util.Set;
 
 public interface SimulationSearch {
-  default Simulation greedyFuzzyTickSearch(User user, SimulationEnvironment environment, Simulator simulator) {
-    return tickSearch(user, environment, simulator, SimulationSearchOptions.GREEDY_FUZZY);
-  }
+	default TickSearch greedyFuzzyTickSearch(User user, SimulationEnvironment environment, Simulator simulator) {
+		return tickSearch(user, environment, simulator, SimulationSearchOptions.GREEDY_FUZZY);
+	}
 
-  default Simulation greedyFullTickSearch(User user, SimulationEnvironment environment, Simulator simulator) {
-    return tickSearch(user, environment, simulator, SimulationSearchOptions.GREEDY_EXACT);
-  }
+	default TickSearch greedyFullTickSearch(User user, SimulationEnvironment environment, Simulator simulator) {
+		return tickSearch(user, environment, simulator, SimulationSearchOptions.GREEDY_EXACT);
+	}
 
 	Set<Simulation> exhaustiveTickSearch(User user, SimulationEnvironment environment, Simulator simulator);
 
-  Simulation tickSearch(
-	  User user, SimulationEnvironment movementData,
-	  Simulator simulator, SimulationSearchOptions options
-  );
+	TickSearch tickSearch(
+		User user, SimulationEnvironment movementData,
+		Simulator simulator, SimulationSearchOptions options
+	);
 
 	List<PostTickSimulation> afterTickMotionCandidates(
-	  User user, SimulationEnvironment environment,
-	  Simulator simulator, Position newPosition,
-	  PostTickMotionType motionType
+		User user, SimulationEnvironment environment,
+		Simulator simulator, Position newPosition,
+		PostTickMotionType motionType
 	);
 }

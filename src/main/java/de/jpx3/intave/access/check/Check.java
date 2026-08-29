@@ -12,6 +12,7 @@ public enum Check {
   BREAK_SPEED_LIMITER("BreakSpeedLimiter"),
   CLICK_PATTERNS("ClickPatterns"),
   CLICK_SPEED_LIMITER("ClickSpeedLimiter"),
+  CLOUD("Cloud"),
   HEURISTICS("Heuristics"),
   INTERACTION_RAYTRACE("InteractionRaytrace"),
   INVENTORY_CLICK_ANALYSIS("InventoryClickAnalysis"),

@@ -35,6 +35,22 @@ final class SimulationTest {
   }
 
   @Test
+  void reusableCopyPreservesSimulationCount() {
+    Simulation simulation = simulation();
+    simulation.setSimulationCount(42);
+
+    assertEquals(42, simulation.reusableCopy().simulationCount());
+  }
+
+  @Test
+  void reusableCopyPreservesSearchDepth() {
+    Simulation simulation = simulation();
+    simulation.setSearchDepth(2);
+
+    assertEquals(2, simulation.reusableCopy().searchDepth());
+  }
+
+  @Test
   void flushClearsBlueDetails() {
     Simulation simulation = simulation();
     simulation.appendBlue("1f");
@@ -46,6 +62,34 @@ final class SimulationTest {
     );
 
     assertEquals("", simulation.blueDetails());
+  }
+
+  @Test
+  void flushClearsSimulationCount() {
+    Simulation simulation = simulation();
+    simulation.setSimulationCount(42);
+
+    simulation.flush(
+      MovementConfiguration.blank(),
+      new MockSimulationEnvironment(),
+      SimulationResult.untouched(Motion.newEmpty())
+    );
+
+    assertEquals(0, simulation.simulationCount());
+  }
+
+  @Test
+  void flushClearsSearchDepth() {
+    Simulation simulation = simulation();
+    simulation.setSearchDepth(2);
+
+    simulation.flush(
+      MovementConfiguration.blank(),
+      new MockSimulationEnvironment(),
+      SimulationResult.untouched(Motion.newEmpty())
+    );
+
+    assertEquals(0, simulation.searchDepth());
   }
 
   @Test

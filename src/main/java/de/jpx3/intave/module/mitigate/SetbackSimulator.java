@@ -29,7 +29,9 @@ import de.jpx3.intave.klass.trace.Caller;
 import de.jpx3.intave.klass.trace.PluginInvocation;
 import de.jpx3.intave.math.MathHelper;
 import de.jpx3.intave.module.Module;
+import de.jpx3.intave.module.Modules;
 import de.jpx3.intave.module.linker.bukkit.BukkitEventSubscription;
+import de.jpx3.intave.module.tracker.player.PacketLogging;
 import de.jpx3.intave.player.Effects;
 import de.jpx3.intave.share.BlockPosition;
 import de.jpx3.intave.share.BoundingBox;
@@ -83,6 +85,13 @@ public final class SetbackSimulator extends Module {
     User user = UserRepository.userOf(player);
     MetadataBundle meta = user.meta();
     ViolationMetadata violationLevelData = meta.violationLevel();
+    Modules.tracker().packetLogging().logSystemMessage(user, () ->
+      "TELEPORT SETBACK EVENT cause=" + teleport.getCause() +
+        " cancelled=" + teleport.isCancelled() +
+        " active_bundle=" + violationLevelData.isInActiveTeleportBundle +
+        " from=" + MathHelper.formatPosition(teleport.getFrom()) +
+        " to=" + (teleport.getTo() == null ? "null" : MathHelper.formatPosition(teleport.getTo()))
+    );
     if (violationLevelData.isInActiveTeleportBundle) {
       if (IntaveControl.DEBUG_EMULATION) {
         player.sendMessage(ChatColor.DARK_PURPLE + "[E-] Exit by " + teleport.getCause() + " teleport event");
@@ -111,12 +120,24 @@ public final class SetbackSimulator extends Module {
     MetadataBundle meta = user.meta();
     MovementMetadata movementData = meta.movement();
     ViolationMetadata violationLevelData = meta.violationLevel();
+    PacketLogging logging = Modules.tracker().packetLogging();
+    String caller = setbackCaller();
+    Motion requestedMotion = motion.copy();
+
+    logging.logSystemMessage(user, () ->
+      "TELEPORT SETBACK REQUEST caller=" + caller +
+        " motion=" + MathHelper.formatMotion(requestedMotion) +
+        " ticks=" + ticks + " delay=" + delay +
+        " cancellable=" + cancellable +
+        " active_bundle=" + violationLevelData.isInActiveTeleportBundle
+    );
 
     if (violationLevelData.isInActiveTeleportBundle) {
+      logging.logSystemMessage(user, () -> "TELEPORT SETBACK IGNORED reason=active_bundle caller=" + caller);
       return;
     }
 
-    Motion originalMotion = motion.copy();
+    Motion originalMotion = requestedMotion;
     boolean isOriginal = true;
 
     if (movementData.emulationVelocity != null) {
@@ -130,11 +151,30 @@ public final class SetbackSimulator extends Module {
     // starting conditions
 
     violationLevelData.isInActiveTeleportBundle = true;
+    Motion appliedMotion = motion;
+    boolean usedOriginalMotion = isOriginal;
+    logging.logSystemMessage(user, () ->
+      "TELEPORT SETBACK START caller=" + caller +
+        " motion=" + MathHelper.formatMotion(appliedMotion) +
+        " requested_motion=" + MathHelper.formatMotion(originalMotion) +
+        " used_original=" + usedOriginalMotion +
+        " ticks=" + ticks + " delay=" + delay + " cancellable=" + cancellable
+    );
     if (IntaveControl.DEBUG_EMULATION) {
       player.sendMessage(ChatColor.DARK_PURPLE + "[E+] " + motion  + " (" + ticks + " ticks, "+(!isOriginal ? "not ["+originalMotion+"] " : "")+" original)");
     }
 
     proceedEmulationTick(player.getWorld(), player, motion, ticks, ticks, delay, cancellable);
+  }
+
+  private static String setbackCaller() {
+    for (StackTraceElement element : Thread.currentThread().getStackTrace()) {
+      String className = element.getClassName();
+      if (!className.equals(Thread.class.getName()) && !className.equals(SetbackSimulator.class.getName())) {
+        return className + "." + element.getMethodName() + ":" + element.getLineNumber();
+      }
+    }
+    return "unknown";
   }
 
 //  public void emulationPushOutOfBlock(
@@ -229,8 +269,20 @@ public final class SetbackSimulator extends Module {
     ViolationMetadata violationLevelData = meta.violationLevel();
 
     if (!violationLevelData.isInActiveTeleportBundle) {
+      Modules.tracker().packetLogging().logSystemMessage(user, () ->
+        "TELEPORT SETBACK TICK ABORT ticks_remaining=" + ticks + " reason=inactive_bundle"
+      );
       return;
     }
+
+    PacketLogging logging = Modules.tracker().packetLogging();
+    Motion incomingMotion = motion.copy();
+    logging.logSystemMessage(user, () ->
+      "TELEPORT SETBACK TICK ticks_remaining=" + ticks +
+        " starting_ticks=" + startingTicks + " delay=" + delay +
+        " motion_in=" + MathHelper.formatMotion(incomingMotion) +
+        " verified=" + MathHelper.formatPosition(movementData.verifiedLocation())
+    );
 
     // check motion status (velocity?)
     Location futurePosition = movementData.verifiedLocation();
@@ -256,6 +308,14 @@ public final class SetbackSimulator extends Module {
     futurePosition.setPitch(movementData.rotationPitch);
 
     boolean exitBundle = (Math.abs(motion.motionX) < 0.01 && Math.abs(motion.motionZ) < 0.01 && motion.motionY == 0.0 && cancellable) || ticks <= 0 || !player.getWorld().equals(world);
+    Motion tickMotion = motion.copy();
+    Location plannedPosition = futurePosition.clone();
+    logging.logSystemMessage(user, () ->
+      "TELEPORT SETBACK TICK DECISION ticks_remaining=" + ticks +
+        " motion=" + MathHelper.formatMotion(tickMotion) +
+        " target=" + MathHelper.formatPosition(plannedPosition) +
+        " exit=" + exitBundle
+    );
 
     if (exitBundle) {
       // velocity
@@ -273,6 +333,11 @@ public final class SetbackSimulator extends Module {
        */
       user.tickFeedback(
         () -> violationLevelData.disableActiveTeleportBundleNextTeleportAccept = true
+      );
+      Location finalTeleportPosition = futurePosition.clone();
+      logging.logSystemMessage(user, () ->
+        "TELEPORT SETBACK FINAL target=" + MathHelper.formatPosition(finalTeleportPosition) +
+          " motion_y=" + tickMotion.motionY + " ticks_remaining=" + ticks
       );
       teleport(player, motion.motionY, futurePosition);
 //      violationLevelData.isInActiveTeleportBundle = false;
@@ -308,8 +373,20 @@ public final class SetbackSimulator extends Module {
         double positionZ = (boundingBox.minZ + boundingBox.maxZ) / 2.0;
         Vector pushVector = resolvePushVector(player, positionX, positionY, positionZ);
         futurePosition = futurePosition.add(pushVector);
+        Vector appliedPush = pushVector.clone();
+        Location pushedPosition = futurePosition.clone();
+        logging.logSystemMessage(user, () ->
+          "TELEPORT SETBACK BLOCK_PUSH vector=" + appliedPush +
+            " target=" + MathHelper.formatPosition(pushedPosition)
+        );
       }
 
+      Location intermediatePosition = futurePosition.clone();
+      logging.logSystemMessage(user, () ->
+        "TELEPORT SETBACK INTERMEDIATE target=" + MathHelper.formatPosition(intermediatePosition) +
+          " motion_y=" + tickMotion.motionY + " ticks_remaining=" + ticks +
+          " block_intersection=" + boundingBoxIntersection
+      );
       teleport(player, motion.motionY, futurePosition);
 
       if (IntaveControl.DEBUG_EMULATION) {
@@ -464,6 +541,12 @@ public final class SetbackSimulator extends Module {
   private void teleport(Player player, double motionY, Location teleportLocation) {
     User user = UserRepository.userOf(player);
     MovementMetadata movementData = user.meta().movement();
+    PacketLogging logging = Modules.tracker().packetLogging();
+    logging.logSystemMessage(user, () ->
+      "TELEPORT SETBACK APPLY target=" + MathHelper.formatPosition(teleportLocation) +
+        " motion_y=" + motionY +
+        " close_inventory=" + (closeInventoryOnDetection && user.meta().inventory().inventoryOpen())
+    );
 
     BoundingBox entityBoundingBox = BoundingBox.fromPosition(user, movementData, teleportLocation);
     movementData.setBoundingBox(entityBoundingBox);
@@ -483,9 +566,28 @@ public final class SetbackSimulator extends Module {
   }
 
   private synchronized void rotationlessTeleport(Player player, Location to, double motionY, float nativeYaw, float nativePitch) {
+    User initialUser = UserRepository.userOf(player);
+    PacketLogging logging = Modules.tracker().packetLogging();
     PlayerTeleportEvent event = constructTeleportEvent(player, to);
+    String eventId = Integer.toHexString(System.identityHashCode(event));
+    logging.logSystemMessage(initialUser, () ->
+      "TELEPORT SETBACK EVENT FIRE id=" + eventId +
+        " target=" + MathHelper.formatPosition(to) +
+        " motion_y=" + motionY + " native_yaw=" + nativeYaw + " native_pitch=" + nativePitch
+    );
     plugin.eventLinker().fireEvent(event);
+    logging.logSystemMessage(initialUser, () ->
+      "TELEPORT SETBACK EVENT RESULT id=" + eventId +
+        " cancelled=" + event.isCancelled() +
+        " target=" + (event.getTo() == null ? "null" : MathHelper.formatPosition(event.getTo()))
+    );
     if (player.isDead() || player.getHealth() <= 0 || player.getPassenger() != null || !player.isOnline() || !UserRepository.hasUser(player)) {
+      logging.logSystemMessage(initialUser, () ->
+        "TELEPORT SETBACK NATIVE SKIPPED id=" + eventId +
+          " dead=" + player.isDead() + " health=" + player.getHealth() +
+          " passenger=" + (player.getPassenger() != null) + " online=" + player.isOnline() +
+          " has_user=" + UserRepository.hasUser(player)
+      );
       return;
     }
     if (!event.isCancelled()) {
@@ -500,6 +602,7 @@ public final class SetbackSimulator extends Module {
           throw new IntaveBootFailureException("Setback location cannot be null");
         }
         if (Math.abs(nativeYaw) > 360f) {
+          logging.logSystemMessage(user, () -> "TELEPORT SETBACK NATIVE APPLY id=" + eventId + " rotation_mode=native");
           teleportMethodContainer.teleport(player, dest, motionY, nativeYaw % 360f, nativePitch, false);
         } else {
           Field yawField = Lookup.serverField("Entity", "yaw");
@@ -508,10 +611,15 @@ public final class SetbackSimulator extends Module {
           float pitch = (float) pitchField.get(playerHandle);
           yawField.set(playerHandle, 0f);
           pitchField.set(playerHandle, 0f);
+          logging.logSystemMessage(user, () -> "TELEPORT SETBACK NATIVE APPLY id=" + eventId + " rotation_mode=zeroed");
           teleportMethodContainer.teleport(player, dest, motionY, 0, 0, true);
           yawField.set(playerHandle, yaw);
           pitchField.set(playerHandle, pitch);
         }
+        logging.logSystemMessage(user, () ->
+          "TELEPORT SETBACK NATIVE COMPLETE id=" + eventId +
+            " server_position=" + MathHelper.formatPosition(player.getLocation())
+        );
 
         if (user.receives(MessageChannel.DEBUG_TELEPORT)) {
           player.sendMessage(IntavePlugin.prefix() + "Teleport to " + player.getLocation().getBlockX() + " " + player.getLocation().getBlockY() + " " + player.getLocation().getBlockZ() + " " + " per " + ChatColor.RED + " setback policy");
@@ -519,6 +627,8 @@ public final class SetbackSimulator extends Module {
       } catch (IllegalAccessException exception) {
         throw new IntaveInternalException(exception);
       }
+    } else {
+      logging.logSystemMessage(initialUser, () -> "TELEPORT SETBACK NATIVE SKIPPED id=" + eventId + " reason=cancelled_event");
     }
   }
 

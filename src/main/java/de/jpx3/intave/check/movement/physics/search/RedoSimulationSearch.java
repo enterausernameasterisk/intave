@@ -40,7 +40,7 @@ public final class RedoSimulationSearch implements SimulationSearch {
 	}
 
 	@Override
-	public Simulation tickSearch(
+	public TickSearch tickSearch(
 		User user, SimulationEnvironment simulationEnvironment,
 		Simulator simulator, SimulationSearchOptions options
 	) {
@@ -48,11 +48,12 @@ public final class RedoSimulationSearch implements SimulationSearch {
 			return delegate.tickSearch(user, simulationEnvironment, simulator, options);
 		}
 		SimulationEnvironment branchEnvironment = simulationEnvironment.mutableView();
-		Simulation firstSimulation = delegate.greedyFuzzyTickSearch(user, branchEnvironment, simulator);
+		TickSearch firstSearch = delegate.greedyFuzzyTickSearch(user, branchEnvironment, simulator);
+		Simulation firstSimulation = firstSearch.simulation();
 
 		double difference = firstSimulation.offsetDifference();
 		if (difference < 0.0005 || firstSimulation.isFromExhaustiveSearch()) {
-			return firstSimulation;
+			return firstSearch;
 		}
 
 		Motion offsetMotion = firstSimulation.offsetMotion();
@@ -62,19 +63,25 @@ public final class RedoSimulationSearch implements SimulationSearch {
 			user, resultEnvironment, offsetMotion.motionX, offsetMotion.motionZ, false, false, unusedEvalTags
 		);
 		if (horizontalVL > 0) {
-			Simulation simulation = delegate.greedyFullTickSearch(user, simulationEnvironment, simulator);
+			TickSearch search = delegate.greedyFullTickSearch(user, simulationEnvironment, simulator);
+			Simulation simulation = search.simulation();
+			TickSearch combinedSearch = search.withAdditionalSearch(firstSearch);
+			simulation.setSimulationCount(combinedSearch.simulationCount());
 			simulation.appendPurple("redo:H("+firstSimulation.blueDetails()+")");
-			return simulation;
+			return combinedSearch;
 		}
 		double verticalVL = evaluator.calculateVerticalViolationIncrease(
 			user, resultEnvironment, offsetMotion.motionY, false, false, unusedEvalTags
 		);
 		if (verticalVL > 0) {
-			Simulation simulation = delegate.greedyFullTickSearch(user, simulationEnvironment, simulator);
+			TickSearch search = delegate.greedyFullTickSearch(user, simulationEnvironment, simulator);
+			Simulation simulation = search.simulation();
+			TickSearch combinedSearch = search.withAdditionalSearch(firstSearch);
+			simulation.setSimulationCount(combinedSearch.simulationCount());
 			simulation.appendPurple("redo:V("+firstSimulation.blueDetails()+")");
-			return simulation;
+			return combinedSearch;
 		}
-		return firstSimulation;
+		return firstSearch;
 	}
 
 	@Override

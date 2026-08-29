@@ -102,6 +102,17 @@ public final class Collision {
     int collisionLimitAdjusted = scaleAdjustedCollisionLimitOf(user);
     int collisionChecksRemaining = collisionLimitAdjusted;
     int collisionsRemaining = Math.min(collisionLimit, collisionLimitAdjusted);
+
+    for (BlockShape pistonShape : environment.pistonSlimeCollisionShapes(playerBox)) {
+      if (container == null) {
+        container = containerSupplier.get();
+      }
+      accumulator.accept(container, pistonShape);
+      if (--collisionsRemaining <= 0) {
+        return finisher.apply(container);
+      }
+    }
+
     exit:
     for (int x = minX; x <= maxX; ++x) {
       for (int z = minZ; z <= maxZ; ++z) {

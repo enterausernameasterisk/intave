@@ -11,19 +11,60 @@
 
 package de.jpx3.intave.check.movement.physics.environment;
 
+import de.jpx3.intave.block.tick.ShulkerBox;
+import de.jpx3.intave.block.tick.piston.PistonSlimeMovement;
 import de.jpx3.intave.check.movement.physics.simulator.BoatSimulator.Status;
-import de.jpx3.intave.share.BoundingBox;
-import de.jpx3.intave.share.Motion;
-import de.jpx3.intave.share.Position;
+import de.jpx3.intave.share.*;
 import org.bukkit.util.Vector;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 final class MutableSimulationEnvironmentViewTest {
+	@Test
+	void shulkerBoxesAreIsolatedAndCommitted() {
+		MockSimulationEnvironment delegate = new MockSimulationEnvironment();
+		SimulationEnvironment view = delegate.mutableView();
+		BlockPosition position = new BlockPosition(1, 2, 3);
+
+		view.setShulkerBoxes(Collections.singletonMap(
+			position, ShulkerBox.opening(Direction.UP)
+		));
+
+		assertTrue(delegate.shulkerBoxes().isEmpty());
+		assertEquals(Direction.UP, view.shulkerBoxAt(1, 2, 3).direction());
+
+		view.commitTo(delegate);
+		assertEquals(view.shulkerBoxes(), delegate.shulkerBoxes());
+	}
+
+	@Test
+	void pistonSlimeMovementsAreIsolatedAndCommitted() {
+		MockSimulationEnvironment delegate = new MockSimulationEnvironment();
+		SimulationEnvironment view = delegate.mutableView();
+		List<PistonSlimeMovement> movements = new ArrayList<>();
+		movements.add(new PistonSlimeMovement(
+			Direction.EAST,
+			Collections.singletonList(new BlockPosition(4, 5, 6)),
+			7
+		));
+
+		view.setPistonSlimeMovements(movements);
+		movements.clear();
+
+		assertTrue(delegate.pistonSlimeMovements().isEmpty());
+		assertEquals(1, view.pistonSlimeMovements().size());
+
+		view.commitTo(delegate);
+
+		assertEquals(1, delegate.pistonSlimeMovements().size());
+		assertEquals(Direction.EAST, delegate.pistonSlimeMovements().get(0).direction());
+	}
+
 	@Test
 	void postTickCandidatesAreIsolatedAndCommitted() {
 		MockSimulationEnvironment delegate = new MockSimulationEnvironment();

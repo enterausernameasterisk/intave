@@ -160,7 +160,6 @@ public final class SneakAndPlace extends PlayerCheckPart<PlacementAnalysis> {
 					.withMessage(COMMON_FLAG_MESSAGE)
 					.withDetails("sneaking seems to be automated (sneak)")
 					.appendFlags(DISPLAY_IN_ALL_VERBOSE_MODES)
-					.withCustomThreshold(PlacementAnalysis.legacyConfigurationLayout() ? "thresholds" : "cloud-thresholds.on-premise")
 					.withVL(Math.min(violationLevel / 1.5, 5)).build();
 				Modules.violationProcessor().processViolation(violation);
 			}

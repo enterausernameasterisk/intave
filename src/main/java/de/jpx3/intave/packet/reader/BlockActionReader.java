@@ -14,7 +14,7 @@ package de.jpx3.intave.packet.reader;
 import de.jpx3.intave.share.BlockPosition;
 import org.bukkit.Material;
 
-import static de.jpx3.intave.share.BlockPosition.*;
+import static de.jpx3.intave.share.BlockPosition.fromProtocolLib;
 
 public final class BlockActionReader extends AbstractPacketReader {
   public BlockPosition blockPosition() {

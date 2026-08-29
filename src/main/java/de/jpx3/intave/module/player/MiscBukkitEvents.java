@@ -19,7 +19,9 @@ import de.jpx3.intave.executor.Synchronizer;
 import de.jpx3.intave.klass.trace.Caller;
 import de.jpx3.intave.klass.trace.PluginInvocation;
 import de.jpx3.intave.module.Module;
+import de.jpx3.intave.module.Modules;
 import de.jpx3.intave.module.linker.bukkit.BukkitEventSubscription;
+import de.jpx3.intave.module.tracker.player.PacketLogging;
 import de.jpx3.intave.player.ItemProperties;
 import de.jpx3.intave.user.MessageChannel;
 import de.jpx3.intave.user.User;
@@ -38,6 +40,7 @@ import org.bukkit.event.world.WorldUnloadEvent;
 import org.bukkit.inventory.ItemStack;
 
 import static de.jpx3.intave.IntaveControl.DISALLOW_ALL_BLOCK_PLACEMENTS_WITH_EVENT;
+import static org.bukkit.event.EventPriority.LOWEST;
 import static org.bukkit.event.EventPriority.MONITOR;
 
 public final class MiscBukkitEvents extends Module {
@@ -67,13 +70,49 @@ public final class MiscBukkitEvents extends Module {
     }
   }
 
-  @BukkitEventSubscription
+  @BukkitEventSubscription(priority = LOWEST)
   public void on(PlayerTeleportEvent teleport) {
+    logTeleportEvent(teleport, "BEGIN", true);
     if (IntaveControl.DEBUG_TELEPORT_CAUSE_AND_CAUSER) {
       PluginInvocation pluginInvocation = Caller.pluginInfo(false);
       String pluginClass = pluginInvocation == null ? "no other plugin" : pluginInvocation.className();
       teleport.getPlayer().sendMessage("Teleport " + teleport.getCause() + " " + teleport.getTo() + " by " + pluginClass);
     }
+  }
+
+  @BukkitEventSubscription(priority = MONITOR)
+  public void after(PlayerTeleportEvent teleport) {
+    logTeleportEvent(teleport, "END", false);
+  }
+
+  private void logTeleportEvent(PlayerTeleportEvent event, String phase, boolean includeCaller) {
+    Player player = event.getPlayer();
+    if (!UserRepository.hasUser(player)) {
+      return;
+    }
+    User user = UserRepository.userOf(player);
+    PluginInvocation invocation = includeCaller ? Caller.pluginInfo(false) : null;
+    String caller = invocation == null ? "unknown" : invocation.toString();
+    String id = Integer.toHexString(System.identityHashCode(event));
+    PacketLogging logging = Modules.tracker().packetLogging();
+    logging.logSystemMessage(user, () ->
+      "TELEPORT EVENT " + phase + " id=" + id +
+        " cause=" + event.getCause() +
+        (includeCaller ? " caller=" + caller : "") +
+        " cancelled=" + event.isCancelled() +
+        " from=" + teleportLocation(event.getFrom()) +
+        " to=" + teleportLocation(event.getTo())
+    );
+  }
+
+  private String teleportLocation(Location location) {
+    if (location == null) {
+      return "null";
+    }
+    World world = location.getWorld();
+    return (world == null ? "null" : world.getName()) + "[" +
+      location.getX() + ", " + location.getY() + ", " + location.getZ() +
+      "; " + location.getYaw() + ", " + location.getPitch() + "]";
   }
 
   @BukkitEventSubscription
@@ -87,7 +126,6 @@ public final class MiscBukkitEvents extends Module {
   public void on(WorldUnloadEvent unloadEvent) {
     World world = unloadEvent.getWorld();
     GarbageCollector.clear(world);
-//    GarbageCollector.clear(world.getUID());
     GarbageCollector.clearIf(o -> o instanceof Location && ((Location) o).getWorld().equals(world));
   }
 
@@ -96,6 +134,7 @@ public final class MiscBukkitEvents extends Module {
     Player player = quit.getPlayer();
     GarbageCollector.clear(player);
     GarbageCollector.clear(player.getUniqueId());
+    GarbageCollector.clearIf(o -> o.equals(player) || o.equals(player.getUniqueId()));
   }
 
   /*

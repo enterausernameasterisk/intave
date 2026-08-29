@@ -84,6 +84,8 @@ public final class LongTermViolationStorage implements Storage {
     switch (checkName.toLowerCase(Locale.ROOT)) {
       case "attackraytrace":
         return vl > 100;
+      case "cloud":
+        return true;
       case "heuristics":
         return description.contains("!");
       case "physics":

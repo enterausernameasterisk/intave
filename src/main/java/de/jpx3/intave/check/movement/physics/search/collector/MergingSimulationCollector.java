@@ -102,7 +102,7 @@ public final class MergingSimulationCollector {
 
 	private boolean resultsInFlyingPacket(Simulation simulation) {
 		double flyingLimit = user.meta().protocol().flyingPacketUncertaintyRadius();
-		Position simulatedPosition = environment.verifiedLastPosition().add(simulation.offsetMotion());
+		Position simulatedPosition = simulation.postTickPosition();
 		return lastReportedPosition.distance(simulatedPosition) < flyingLimit;
 	}
 

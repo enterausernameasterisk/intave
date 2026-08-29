@@ -11,80 +11,84 @@
 
 package de.jpx3.intave.module.nayoro;
 
-import de.jpx3.intave.module.nayoro.event.*;
-import de.jpx3.intave.module.nayoro.event.sink.EventSink;
+import ac.intave.samples.event.*;
+import ac.intave.samples.serial.JsonReader;
+import ac.intave.samples.serial.JsonWriter;
+import ac.intave.samples.share.BlockUpdate;
+import ac.intave.samples.share.Classifier;
+import de.jpx3.intave.adapter.MinecraftVersion;
+import de.jpx3.intave.module.nayoro.stream.PeriodicFlushOutputStream;
 import de.jpx3.intave.module.tracker.entity.Entity;
+import de.jpx3.intave.version.ProtocolVersionConverter;
 
-import java.io.Closeable;
-import java.io.DataOutput;
-import java.io.Flushable;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.io.StringWriter;
 import java.util.*;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-import static de.jpx3.intave.module.nayoro.SampleFlags.*;
+final class RecordEventSink extends EventSink {
+  private static final int COMPRESSION_FLUSH_THRESHOLD = 128 * 1024;
+  // Offset values are assigned after chunking, so leave room for a full millisecond timestamp.
+  static final int EVENT_CHARACTER_BUDGET = JsonReader.MAX_EVENT_CHARACTERS - 256;
 
-class RecordEventSink extends EventSink {
-  private long last = System.currentTimeMillis();
-	private final Environment environment;
-  private final DataOutput dataOutput;
+  private final long startedAt = System.currentTimeMillis();
+  private long lastEventAt = startedAt;
+  private final Environment environment;
+  private final OutputStream output;
+  private JsonWriter writer;
   private final Set<Integer> entities = new HashSet<>();
-  private final Map<Integer, Map<Integer, Inventory.Item>> windowItems = new HashMap<>();
+  private final NearbyBlockTracker nearbyBlocks = new NearbyBlockTracker();
   private boolean setup = false;
+  // Guarded by writeLock so an in-flight event either finishes before close or observes closure.
+  private boolean closed = false;
   private final Classifier classifier;
   private final Lock writeLock = new ReentrantLock();
-  private final boolean checkFullEventRead = true;
 
-  public RecordEventSink(Environment environment, DataOutput dataOutput) {
+  public RecordEventSink(Environment environment, OutputStream output) {
     this.environment = environment;
-    this.dataOutput = dataOutput;
+    this.output = output;
     this.classifier = Classifier.UNKNOWN;
   }
 
-  public RecordEventSink(Environment environment, DataOutput dataOutput, Classifier classifier) {
+  public RecordEventSink(Environment environment, OutputStream output, Classifier classifier) {
     this.environment = environment;
-    this.dataOutput = dataOutput;
+    this.output = output;
     this.classifier = classifier == null ? Classifier.UNKNOWN : classifier;
   }
 
   public synchronized void setupIfNeeded() {
     if (!setup) {
-      setup = true;
       try {
         writeLock.lock();
-        dataOutput.writeUTF("INTAVE/SAMPLE");
-       // dataOutput.writeUTF(LicenseAccess.network());
-        UUID id = UUID.randomUUID();
-        dataOutput.writeLong(id.getMostSignificantBits());
-        dataOutput.writeLong(id.getLeastSignificantBits());
-        dataOutput.writeLong(System.currentTimeMillis());
-        int flags = 0;
-        if (checkFullEventRead) {
-          flags |= EVENT_ZERO_BYTE_APPEND;
-        }
-        switch (classifier) {
-          case LEGIT:
-            flags |= MARKED_LEGIT;
-            break;
-          case CHEAT:
-            flags |= MARKED_CHEAT;
-            break;
-          case UNKNOWN:
-            flags |= MARKED_UNKNOWN;
-            break;
-        }
-        dataOutput.writeInt(flags);
+        JsonWriter initializedWriter = new JsonWriter(
+          new PeriodicFlushOutputStream(output, COMPRESSION_FLUSH_THRESHOLD)
+        );
+        initializedWriter.visitAny(
+          new HeaderEvent(UUID.randomUUID(), "unknown", classifier, startedAt)
+        );
+        writer = initializedWriter;
+        setup = true;
       } catch (IOException exception) {
-        throw new RuntimeException(exception);
+        throw new IllegalStateException("Could not initialize recording writer", exception);
       } finally {
         writeLock.unlock();
       }
-      visit(new PlayerInitEvent(environment.mainPlayer()));
+      PlayerContainer player = environment.mainPlayer();
+      visit(new PlayerInitEvent(
+        player.name(), player.uuid(), player.id(), player.version(),
+        ProtocolVersionConverter.protocolVersionBy(MinecraftVersion.current()),
+        SampleTypes.position(player.position()), SampleTypes.rotation(player.rotation())
+      ));
       visit(new PropertiesEvent(environment.properties()));
       environment.mainPlayer().applyIfUserPresent(user -> {
         for (Entity tracedEntity : user.meta().connection().tracedEntities()) {
-          visit(new EntitySpawnEvent(tracedEntity.entityId(), tracedEntity.entityName(), tracedEntity.typeData().size(), tracedEntity.position.toPosition()));
+          visit(new EntitySpawnEvent(
+            tracedEntity.entityId(), tracedEntity.entityName(),
+            SampleTypes.hitboxSize(tracedEntity.typeData().size()),
+            SampleTypes.position(tracedEntity.position.toPosition())
+          ));
         }
       });
     }
@@ -115,6 +119,19 @@ class RecordEventSink extends EventSink {
   }
 
   @Override
+  public synchronized void visit(PlayerMoveEvent event) {
+    environment.mainPlayer().applyIfUserPresent(user -> {
+      List<BlockUpdate> updates = nearbyBlocks.dirtyNearbyBlocks(
+        user.blockCache(), user.meta().movement().boundingBox()
+      );
+      for (BlockUpdatesEvent updateEvent : chunkBlockUpdates(updates)) {
+        visitAny(updateEvent);
+      }
+    });
+    visitAny(event);
+  }
+
+  @Override
   public void visit(EntityRemoveEvent event) {
     if (entities.remove(event.id())) {
       visitAny(event);
@@ -122,43 +139,17 @@ class RecordEventSink extends EventSink {
   }
 
   @Override
-  public void visit(WindowItemsEvent event) {
-//    Map<Integer, Inventory.Item> savedInventory = windowItems.computeIfAbsent(event.windowId(), id -> new HashMap<>());
-//    // Only send if one of the items changed
-//    boolean changed = false;
-//    for (Map.Entry<Integer, Inventory.Item> entry : event.items().entrySet()) {
-//      Inventory.Item oldItem = savedInventory.get(entry.getKey());
-//      if (oldItem == null || !oldItem.equals(entry.getValue())) {
-//        System.out.println("Item changed: " + entry.getKey());
-//        changed = true;
-//        break;
-//      }
-//    }
-//    if (changed) {
-//      savedInventory.clear();
-//      savedInventory.putAll(event.items());
-      visitAny(event);
-//    }
-  }
-
-  @Override
   public synchronized void visitAny(Event event) {
     setupIfNeeded();
     try {
       writeLock.lock();
-      int duration = (int) Math.min(Short.MAX_VALUE, System.currentTimeMillis() - last);
-      last = System.currentTimeMillis();
-      dataOutput.writeShort(duration);
-      dataOutput.writeByte(EventRegistry.idOf(event));
-      event.serialize(environment, dataOutput);
-      if (checkFullEventRead) {
-        dataOutput.writeByte(0xa);
+      if (closed) {
+        return;
       }
-      if (dataOutput instanceof Flushable) {
-        ((Flushable) dataOutput).flush();
-      }
-    } catch (IOException exception) {
-      throw new IllegalStateException("Could not serialize event " + event.getClass().getName(), exception);
+      long now = System.currentTimeMillis();
+      event.withOffset(Math.max(0, now - lastEventAt));
+      lastEventAt = now;
+      writer.visitAny(event);
     } finally {
       writeLock.unlock();
     }
@@ -169,13 +160,11 @@ class RecordEventSink extends EventSink {
     setupIfNeeded();
     try {
       writeLock.lock();
-      dataOutput.writeShort(0);
-      dataOutput.writeByte(-1);
-      if (dataOutput instanceof Closeable) {
-        ((Closeable) dataOutput).close();
+      if (closed) {
+        return;
       }
-    } catch (IOException exception) {
-      throw new IllegalStateException("Could not close data output", exception);
+      closed = true;
+      writer.close();
     } finally {
       writeLock.unlock();
     }
@@ -184,5 +173,66 @@ class RecordEventSink extends EventSink {
   @Override
   public String name() {
     return "RECORD";
+  }
+
+  static List<BlockUpdatesEvent> chunkBlockUpdates(List<BlockUpdate> updates) {
+    if (updates.isEmpty()) {
+      return Collections.emptyList();
+    }
+    List<BlockUpdatesEvent> events = new ArrayList<>();
+    List<BlockUpdate> current = new ArrayList<>();
+    StringWriter sizeOutput = new StringWriter();
+    JsonWriter sizeWriter = new JsonWriter(sizeOutput);
+    int emptyEventCharacters = serializedCharacters(
+      sizeWriter, sizeOutput, new BlockUpdatesEvent()
+    );
+    int currentCharacters = emptyEventCharacters;
+    for (BlockUpdate update : updates) {
+      int updateCharacters = serializedCharacters(
+        sizeWriter, sizeOutput, new BlockUpdatesEvent(Collections.singleton(update))
+      ) - emptyEventCharacters;
+      if (emptyEventCharacters + updateCharacters > EVENT_CHARACTER_BUDGET) {
+        throw oversizedUpdate(update);
+      }
+
+      int separatorCharacters = current.isEmpty() ? 0 : 1;
+      if (currentCharacters + separatorCharacters + updateCharacters >
+        EVENT_CHARACTER_BUDGET
+      ) {
+        events.add(new BlockUpdatesEvent(current));
+        current.clear();
+        currentCharacters = emptyEventCharacters;
+        separatorCharacters = 0;
+      }
+
+      current.add(update);
+      currentCharacters += separatorCharacters + updateCharacters;
+    }
+    if (!current.isEmpty()) {
+      events.add(new BlockUpdatesEvent(current));
+    }
+    return events;
+  }
+
+  static int serializedCharacters(BlockUpdatesEvent event) {
+    StringWriter output = new StringWriter();
+    return serializedCharacters(new JsonWriter(output), output, event);
+  }
+
+  private static int serializedCharacters(
+    JsonWriter writer,
+    StringWriter output,
+    BlockUpdatesEvent event
+  ) {
+    output.getBuffer().setLength(0);
+    writer.visitAny(event);
+    return output.getBuffer().length();
+  }
+
+  private static IllegalArgumentException oversizedUpdate(BlockUpdate update) {
+    return new IllegalArgumentException(
+      "A single block update at " + update.position() +
+        " exceeds the Nayoro event character limit"
+    );
   }
 }

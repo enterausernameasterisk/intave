@@ -39,6 +39,7 @@ public final class PacketReaders {
     setup(CAMERA, EntityReader::new);
     setup(COLLECT, EntityReader::new);
     setup(COMBAT_EVENT, CombatEventReader::new);
+    setup(Server.CLOSE_WINDOW, WindowIdReader::new);
     setup(ENTITY, EntityReader::new);
     setup(ENTITY_DESTROY, EntityDestroyReader::new);
     setup(ENTITY_EFFECT, EntityEffectReader::new);

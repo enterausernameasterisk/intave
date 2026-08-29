@@ -14,14 +14,9 @@ package de.jpx3.intave.check.movement.physics.misc;
 import de.jpx3.intave.adapter.MinecraftVersion;
 import de.jpx3.intave.adapter.MinecraftVersions;
 import de.jpx3.intave.block.cache.MockFullBlockStaticPlane;
-import de.jpx3.intave.block.fluid.FluidFlow;
-import de.jpx3.intave.block.fluid.Fluids;
 import de.jpx3.intave.check.movement.physics.config.MovementConfiguration;
 import de.jpx3.intave.check.movement.physics.simulator.Simulator;
 import de.jpx3.intave.check.movement.physics.simulator.Simulators;
-import de.jpx3.intave.player.collider.Colliders;
-import de.jpx3.intave.player.collider.complex.Collider;
-import de.jpx3.intave.player.collider.simple.SimpleCollider;
 import de.jpx3.intave.test.FakePlayerFactory;
 import de.jpx3.intave.test.FakeWorldFactory;
 import de.jpx3.intave.user.User;
@@ -43,9 +38,6 @@ public final class ExamplePhysicsTest {
 	private static final UUID EMPTY_ID = UUID.fromString("00000000-0000-0000-0000-000000000000");
 
 	private User testUser;
-	private final Collider collider = Colliders.anyCollider();
-	private final FluidFlow waterflow = Fluids.anyWaterflow();
-	private final SimpleCollider simpleCollider = Colliders.anySimpleCollider();
 
 	@BeforeEach
 	void setUp() {

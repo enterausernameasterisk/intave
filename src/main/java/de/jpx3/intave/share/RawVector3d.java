@@ -11,6 +11,9 @@
 
 package de.jpx3.intave.share;
 
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonWriter;
+import de.jpx3.intave.codec.StreamCodec;
 import de.jpx3.intave.klass.Lookup;
 import de.jpx3.intave.math.MathHelper;
 import org.bukkit.Location;
@@ -19,7 +22,16 @@ import org.bukkit.util.Vector;
 
 import java.lang.reflect.InvocationTargetException;
 
+import static de.jpx3.intave.codec.JsonStreamCodecs.doubleField;
+import static de.jpx3.intave.codec.JsonStreamCodecs.object;
+
 public class RawVector3d {
+  public static final StreamCodec<JsonReader, JsonWriter, RawVector3d> JSON_CODEC = object(
+    doubleField("x", RawVector3d::x),
+    doubleField("y", RawVector3d::y),
+    doubleField("z", RawVector3d::z),
+    RawVector3d::new
+  );
   public static final RawVector3d ZERO = new RawVector3d(0.0D, 0.0D, 0.0D);
 	public static final RawVector3d X_AXIS = new RawVector3d(1.0D, 0.0D, 0.0D);
   public static final RawVector3d Y_AXIS = new RawVector3d(0.0D, 1.0D, 0.0D);

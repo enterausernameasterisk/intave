@@ -24,7 +24,7 @@ public enum ViolationVerboseMode {
     }
   };
 
-  private static final List<String> SELECTED_CHECKS = Arrays.asList("heuristics", "placementanalysis", "attackraytrace", "protocolscanner");
+  private static final List<String> SELECTED_CHECKS = Arrays.asList("cloud", "heuristics", "placementanalysis", "attackraytrace", "protocolscanner");
 
   public abstract boolean doVerbose(ViolationContext context);
 }

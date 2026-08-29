@@ -17,11 +17,7 @@ import de.jpx3.intave.check.combat.Heuristics;
 import de.jpx3.intave.check.combat.heuristics.ClassicHeuristic;
 import de.jpx3.intave.check.combat.heuristics.HeuristicsClassicType;
 import de.jpx3.intave.check.movement.physics.environment.SimulationEnvironment;
-import de.jpx3.intave.entity.datawatcher.DataWatcherAccess;
-import de.jpx3.intave.executor.Synchronizer;
-import de.jpx3.intave.math.Hypot;
 import de.jpx3.intave.module.linker.packet.PacketSubscription;
-import de.jpx3.intave.module.mitigate.AttackNerfStrategy;
 import de.jpx3.intave.packet.converter.PlayerAction;
 import de.jpx3.intave.packet.converter.PlayerActionResolver;
 import de.jpx3.intave.user.User;
@@ -30,7 +26,6 @@ import org.bukkit.entity.Player;
 
 import static de.jpx3.intave.check.movement.physics.environment.MoveMetric.FLYING_PACKET_ACCURATE;
 import static de.jpx3.intave.check.movement.physics.environment.MoveMetric.TELEPORT;
-import static de.jpx3.intave.entity.datawatcher.DataWatcherAccess.WATCHER_SNEAK_ID;
 import static de.jpx3.intave.module.linker.packet.PacketId.Client.*;
 
 public final class PacketPlayerActionToggleHeuristic extends ClassicHeuristic<PacketPlayerActionToggleHeuristic.PacketSprintToggleHeuristicMeta> {
@@ -100,18 +95,18 @@ public final class PacketPlayerActionToggleHeuristic extends ClassicHeuristic<Pa
         if (!flyingPacketStream) {
           details += ", last flying: " + movementData.ticksPast(FLYING_PACKET_ACCURATE) + " ticks ago";
         }
-        flag(user, message, details);
-
-        boolean cancel = (flyingPacketStream || Hypot.fast(movementData.offsetMotionX(), movementData.offsetMotionZ()) > 0.2) && heuristicMeta.threshold++ > 3;
-        if (cancel) {
-          if (sprint) {
-            //dmc12
-            user.nerf(AttackNerfStrategy.CANCEL, "sprint:toggles");
-          } else {
-            punishmentData.timeLastSneakToggleCancel = System.currentTimeMillis();
-            Synchronizer.synchronize(() -> DataWatcherAccess.setDataWatcherFlag(player, WATCHER_SNEAK_ID, false));
-          }
-        }
+//        flag(user, message, details);
+//
+//        boolean cancel = (flyingPacketStream || Hypot.fast(movementData.offsetMotionX(), movementData.offsetMotionZ()) > 0.2) && heuristicMeta.threshold++ > 3;
+//        if (cancel) {
+//          if (sprint) {
+//            //dmc12
+//            user.nerf(AttackNerfStrategy.CANCEL, "sprint:toggles");
+//          } else {
+//            punishmentData.timeLastSneakToggleCancel = System.currentTimeMillis();
+//            Synchronizer.synchronize(() -> DataWatcherAccess.setDataWatcherFlag(player, WATCHER_SNEAK_ID, false));
+//          }
+//        }
       }
     } else if (heuristicMeta.threshold > 0) {
       heuristicMeta.threshold -= 0.01;

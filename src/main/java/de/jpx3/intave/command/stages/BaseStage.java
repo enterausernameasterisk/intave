@@ -222,6 +222,7 @@ public final class BaseStage extends CommandStage {
     MOVEMENT(MessageChannel.DEBUG_MOVEMENT),
     MOTION(MessageChannel.DEBUG_MOTION),
     SENT_INPUT(MessageChannel.DEBUG_SENT_INPUT),
+    CLOUD_PACKETS(MessageChannel.DEBUG_CLOUD_PACKETS),
     PLAYER_ACTIONS(MessageChannel.DEBUG_PLAYER_ACTIONS),
     ATTACK_RAYTRACE(MessageChannel.DEBUG_ATTACK_RAYTRACE),
 
@@ -465,6 +466,7 @@ public final class BaseStage extends CommandStage {
     }
     printHistory(sender, "Reach", violations.fromCheck("attackraytrace"));
     printHistory(sender, "KillAura", violations.fromCheck("heuristics"));
+    printHistory(sender, "Cloud analysis", violations.fromCheck("cloud"));
     printHistory(sender, "Fly/Speed", violations.fromCheck("physics"));
     printHistory(sender, "Timer", violations.fromCheck("timer"));
     printHistory(sender, "AutoClicker", violations.fromCheck("clickpatterns"));

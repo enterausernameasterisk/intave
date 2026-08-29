@@ -1,13 +1,28 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.share;
 
 import com.comphenix.protocol.wrappers.EnumWrappers;
 import com.google.common.base.Predicate;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Maps;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonWriter;
+import de.jpx3.intave.codec.StreamCodec;
 import org.bukkit.util.Vector;
 
 import java.util.*;
 
+import static de.jpx3.intave.codec.JsonStreamCodecs.enumCodec;
 import static de.jpx3.intave.share.Direction.Axis.*;
 import static de.jpx3.intave.share.Direction.AxisDirection.NEGATIVE;
 import static de.jpx3.intave.share.Direction.AxisDirection.POSITIVE;
@@ -19,6 +34,9 @@ public enum Direction {
   SOUTH(3, 2, 0, "south", POSITIVE, Z_AXIS, new RawVector3d(0, 0, 1)),
   WEST(4, 5, 1, "west", NEGATIVE, X_AXIS, new RawVector3d(-1, 0, 0)),
   EAST(5, 4, 3, "east", POSITIVE, X_AXIS, new RawVector3d(1, 0, 0));
+
+  public static final StreamCodec<JsonReader, JsonWriter, Direction> JSON_CODEC =
+    enumCodec(Direction.class);
 
   /**
    * Ordering index for D-U-N-S-W-E

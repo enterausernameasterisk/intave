@@ -11,7 +11,11 @@
 
 package de.jpx3.intave.user;
 
+import ac.intave.cloud.protocol.Packet;
+import ac.intave.cloud.protocol.listener.Serverbound;
+import ac.intave.cloud.protocol.packets.ServerboundReport;
 import com.comphenix.protocol.events.PacketEvent;
+import com.google.gson.JsonObject;
 import de.jpx3.intave.access.UnsupportedFallbackOperationException;
 import de.jpx3.intave.access.player.trust.TrustFactor;
 import de.jpx3.intave.access.player.trust.TrustFactorResolver;
@@ -34,6 +38,7 @@ import de.jpx3.intave.module.violation.placeholder.PlayerContext;
 import de.jpx3.intave.module.violation.placeholder.UserContext;
 import de.jpx3.intave.player.collider.complex.Collider;
 import de.jpx3.intave.player.collider.simple.SimpleCollider;
+import de.jpx3.intave.report.Report;
 import de.jpx3.intave.trustfactor.TrustFactorConfiguration;
 import de.jpx3.intave.user.meta.CheckCustomMetadata;
 import de.jpx3.intave.user.meta.MetadataBundle;
@@ -46,6 +51,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.LongFunction;
 import java.util.function.Predicate;
 
 /**
@@ -591,4 +597,13 @@ public interface User {
   default void refreshSprintState() {
     refreshSprintState(null);
   }
+
+  default void sendReport(Report report) {
+    // materialize on this thread
+    JsonObject json = report.toJson();
+    // transmission on other threads
+    transmitCloudPacket(value -> new ServerboundReport(value, json));
+  }
+
+  void transmitCloudPacket(LongFunction<? extends Packet<Serverbound>> packetGenerator);
 }

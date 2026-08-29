@@ -1,3 +1,14 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.resource;
 
 import de.jpx3.intave.resource.legacy.LegacyResource;
@@ -108,6 +119,21 @@ public interface Resource extends LegacyResource {
   }
 
   InputStream read();
+
+  default byte[] readAll() throws IOException {
+    try (InputStream inputStream = read()) {
+      if (inputStream == null) {
+        return new byte[0];
+      }
+      ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+      byte[] buffer = new byte[1024];
+      int read;
+      while ((read = inputStream.read(buffer)) != -1) {
+        outputStream.write(buffer, 0, read);
+      }
+      return outputStream.toByteArray();
+    }
+  }
 
   default OutputStream writeStream() {
     throw new UnsupportedOperationException("This resource does not support write streams");

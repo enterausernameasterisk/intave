@@ -18,7 +18,6 @@ import de.jpx3.intave.adapter.ComponentLoader;
 import de.jpx3.intave.adapter.ProtocolLibraryAdapter;
 import de.jpx3.intave.adapter.ViaVersionAdapter;
 import de.jpx3.intave.agent.AgentAccessor;
-import de.jpx3.intave.analytics.Analytics;
 import de.jpx3.intave.block.access.BlockAccess;
 import de.jpx3.intave.block.access.BlockInteractionAccess;
 import de.jpx3.intave.block.access.BlockWrapper;
@@ -35,16 +34,12 @@ import de.jpx3.intave.check.CheckService;
 import de.jpx3.intave.cleanup.GarbageCollector;
 import de.jpx3.intave.cleanup.ShutdownTasks;
 import de.jpx3.intave.cleanup.StartupTasks;
+import de.jpx3.intave.cloud.Cloud;
 import de.jpx3.intave.command.CommandForwarder;
 import de.jpx3.intave.config.ConfigurationService;
 import de.jpx3.intave.connect.IntaveDomains;
-import de.jpx3.intave.connect.cloud.Cloud;
-import de.jpx3.intave.connect.cloud.LogTransmittor;
 import de.jpx3.intave.connect.customclient.CustomClientSupportService;
-import de.jpx3.intave.connect.proxy.ProxyMessenger;
-import de.jpx3.intave.connect.sibyl.SibylBroadcast;
 import de.jpx3.intave.connect.sibyl.SibylIntegrationService;
-import de.jpx3.intave.connect.upload.ScheduledUploadService;
 import de.jpx3.intave.diagnostic.ConsoleOutput;
 import de.jpx3.intave.entity.EntityLookup;
 import de.jpx3.intave.entity.size.HitboxSizeAccess;
@@ -101,7 +96,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
@@ -113,7 +107,6 @@ public final class IntavePlugin extends JavaPlugin {
   private static String version = "UNKNOWN";
   private static String prefix = ChatColor.translateAlternateColorCodes('&', "&8[&c&lIntave&8]&7 ");
   private static String defaultColor = ChatColor.getLastColors(prefix);
-  private static final UUID gameId = UUID.randomUUID();
   private static boolean offlineMode = false, successfullyBooted = false;
 
   static {
@@ -121,10 +114,8 @@ public final class IntavePlugin extends JavaPlugin {
   }
 
   private IntaveLogger logger;
-  private LogTransmittor transmittor;
   private Cloud cloud;
 
-  private ProxyMessenger proxyMessenger; // module candidate
   private SibylIntegrationService sibylIntegrationService;
   private FakePlayerEventService fakePlayerEventService; // module candidate
   private ConfigurationService configService;
@@ -136,8 +127,6 @@ public final class IntavePlugin extends JavaPlugin {
   private IntaveAccess access;
   private YamlConfiguration configuration;
   private PlayerListService blackListService; // module candidate
-  private ScheduledUploadService uploadService; // module candidate
-  private Analytics analytics; // module candidate
   private Metrics metrics;
   private IntegrationTestService integrationTestService;
 
@@ -221,8 +210,6 @@ public final class IntavePlugin extends JavaPlugin {
       Synchronizer.setup();
       PacketReaders.setup();
 
-      SibylBroadcast.setup();
-
       IdentifierReserve.setup();
       Inventory.populateCache();
       EntityTypeDataAccessor.setup();
@@ -233,9 +220,6 @@ public final class IntavePlugin extends JavaPlugin {
       blackListService = new PlayerListService(this);
       cloud = new Cloud();
       cloud.init();
-
-      transmittor = new LogTransmittor();
-      transmittor.init();
 
       // stage 6
       Modules.proceedBoot(BootSegment.STAGE_6);
@@ -324,23 +308,24 @@ public final class IntavePlugin extends JavaPlugin {
       defaultColor = ChatColor.getLastColors(prefix);
       FaultKicks.applyFrom(configuration.getConfigurationSection("fault-kicks"));
       ConsoleOutput.applyFrom(configuration.getConfigurationSection("logging"));
-      cloud.configInit(configuration.getConfigurationSection("cloud"));
+      try {
+        cloud.configInit(configuration);
+      } catch (Exception exception) {
+        logger.error("Something went wrong loading the cloud configuration");
+        exception.printStackTrace();
+      }
 
       // stage 8
       Modules.proceedBoot(BootSegment.STAGE_8);
       accessService = new IntaveAccessService(this);
       accessService.setup();
-      analytics = new Analytics(this);
       customClientSupportService = new CustomClientSupportService(this);
       customClientSupportService.setup();
       checkService = new CheckService(this);
       fakePlayerEventService = new FakePlayerEventService(this);
-      proxyMessenger = new ProxyMessenger(this);
       sibylIntegrationService = new SibylIntegrationService(this);
       integrationTestService = new IntegrationTestService();
       integrationTestService.setup();
-      uploadService = new ScheduledUploadService();
-      uploadService.enable();
 
       getCommand("intave").setExecutor(new CommandForwarder());
 
@@ -699,14 +684,6 @@ public final class IntavePlugin extends JavaPlugin {
     return cloud;
   }
 
-  public LogTransmittor logTransmittor() {
-    return transmittor;
-  }
-
-  public ProxyMessenger proxy() {
-    return proxyMessenger;
-  }
-
   public CheckService checks() {
     return checkService;
   }
@@ -726,14 +703,6 @@ public final class IntavePlugin extends JavaPlugin {
 
   public SibylIntegrationService sibyl() {
     return sibylIntegrationService;
-  }
-
-  public Analytics analytics() {
-    return analytics;
-  }
-
-  public ScheduledUploadService uploader() {
-    return uploadService;
   }
 
   public IntaveVersionList versions() {
@@ -760,10 +729,6 @@ public final class IntavePlugin extends JavaPlugin {
       return version.substring(lastPlusIndex + 1);
     }
     return "unknown";
-  }
-
-  public static UUID gameId() {
-    return gameId;
   }
 
   public static String prefix() {

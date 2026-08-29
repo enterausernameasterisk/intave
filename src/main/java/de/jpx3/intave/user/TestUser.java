@@ -11,6 +11,8 @@
 
 package de.jpx3.intave.user;
 
+import ac.intave.cloud.protocol.Packet;
+import ac.intave.cloud.protocol.listener.Serverbound;
 import com.comphenix.protocol.events.PacketEvent;
 import de.jpx3.intave.access.player.trust.TrustFactor;
 import de.jpx3.intave.block.cache.BlockCache;
@@ -44,10 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.BiFunction;
-import java.util.function.Consumer;
-import java.util.function.Function;
-import java.util.function.Predicate;
+import java.util.function.*;
 
 final class TestUser implements User {
   private final Map<Class<? extends CheckCustomMetadata>, CheckCustomMetadata> metadataPool = new ConcurrentHashMap<>();
@@ -440,6 +439,11 @@ final class TestUser implements User {
 
   @Override
   public void refreshSprintState(Consumer<Void> callback) {
+
+  }
+
+  @Override
+  public void transmitCloudPacket(LongFunction<? extends Packet<Serverbound>> packetGenerator) {
 
   }
 

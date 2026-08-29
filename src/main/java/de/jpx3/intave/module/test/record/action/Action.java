@@ -21,6 +21,8 @@ import java.util.List;
 public abstract class Action {
 	public static final StreamCodec<ByteBuf, ByteBuf, Action> STREAM_CODEC = StreamCodec.dispatchBuilder(Action.class, ActionType.STREAM_CODEC)
 		.subtype(ActionType.RECEIVE_VELOCITY, ReceiveVelocity.class, () -> ReceiveVelocity.STREAM_CODEC)
+		.subtype(ActionType.PISTON_SLIME, PistonSlimeAction.class, () -> PistonSlimeAction.STREAM_CODEC)
+		.subtype(ActionType.SHULKER_BOX, ShulkerBoxAction.class, () -> ShulkerBoxAction.STREAM_CODEC)
 		.build();
 	public static final StreamCodec<ByteBuf, ByteBuf, List<Action>> LIST_STREAM_CODEC =
 		ByteBufStreamCodecs.listCodecOf(STREAM_CODEC);

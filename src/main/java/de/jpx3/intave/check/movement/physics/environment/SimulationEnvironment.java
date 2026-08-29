@@ -19,6 +19,7 @@ import de.jpx3.intave.block.physics.BlockProperties;
 import de.jpx3.intave.block.physics.MaterialMagic;
 import de.jpx3.intave.block.shape.BlockShape;
 import de.jpx3.intave.block.tick.ShulkerBox;
+import de.jpx3.intave.block.tick.piston.PistonSlimeMovement;
 import de.jpx3.intave.block.type.BlockTypeAccess;
 import de.jpx3.intave.check.movement.physics.config.MovementConfiguration;
 import de.jpx3.intave.check.movement.physics.simulator.BoatSimulator.Status;
@@ -40,6 +41,7 @@ import org.jetbrains.annotations.NotNull;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import static de.jpx3.intave.share.ClientMath.floor;
 import static de.jpx3.intave.user.meta.ProtocolMetadata.VER_1_14;
@@ -73,9 +75,13 @@ public interface SimulationEnvironment {
   float lastRotationYaw();
   float lastRotationPitch();
 
-  default boolean lastRotationEqualsRotation() {
-    return lastRotationYaw() == rotationYaw() && lastRotationPitch() == rotationPitch();
+  default boolean rotated() {
+    return lastRotationYaw() != rotationYaw() || lastRotationPitch() != rotationPitch();
   }
+
+	default boolean lastRotationEqualsRotation() {
+		return !rotated();
+	}
 
   void updateMovement(
 	  double newPositionX, double newPositionY, double newPositionZ,
@@ -192,6 +198,32 @@ public interface SimulationEnvironment {
 
   List<PostTickSimulation> postTickMotionCandidates();
   void setPostTickMotionCandidates(@NotNull List<PostTickSimulation> postTickSimulations);
+
+  List<PistonSlimeMovement> pistonSlimeMovements();
+  void setPistonSlimeMovements(@NotNull List<PistonSlimeMovement> pistonSlimeMovements);
+
+  default List<BlockShape> pistonSlimeCollisionShapes(@NotNull BoundingBox queryBox) {
+    long currentTick = currentTick();
+    List<BlockShape> collisionShapes = null;
+    for (PistonSlimeMovement movement : pistonSlimeMovements()) {
+      if (!movement.activeAt(currentTick)) {
+        continue;
+      }
+      for (BlockPosition source : movement.slimeSources()) {
+        BlockShape collisionShape = movement.collisionBoxAt(source, currentTick);
+        if (collisionShape.intersectsWith(queryBox)) {
+          if (collisionShapes == null) {
+            collisionShapes = new ArrayList<>();
+          }
+          collisionShapes.add(collisionShape);
+        }
+      }
+    }
+    return collisionShapes == null ? Collections.emptyList() : collisionShapes;
+  }
+
+  Map<BlockPosition, ShulkerBox> shulkerBoxes();
+  void setShulkerBoxes(@NotNull Map<BlockPosition, ShulkerBox> shulkerBoxes);
 
   default void clearPostTickMotionCandidates() {
     setPostTickMotionCandidates(Collections.emptyList());
@@ -576,7 +608,7 @@ public interface SimulationEnvironment {
   }
 
   default @Nullable ShulkerBox shulkerBoxAt(int posX, int posY, int posZ) {
-    return user().meta().movement().shulkerBoxAt(posX, posY, posZ);
+    return shulkerBoxes().get(new BlockPosition(posX, posY, posZ));
   }
 
   default int pistonMotionToleranceRemaining() {

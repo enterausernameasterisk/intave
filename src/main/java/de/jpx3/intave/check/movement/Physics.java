@@ -16,6 +16,7 @@ import com.comphenix.protocol.ProtocolLibrary;
 import com.comphenix.protocol.events.PacketContainer;
 import com.comphenix.protocol.wrappers.WrappedBlockData;
 import de.jpx3.intave.IntaveControl;
+import de.jpx3.intave.IntavePlugin;
 import de.jpx3.intave.access.check.MitigationStrategy;
 import de.jpx3.intave.access.player.trust.TrustFactor;
 import de.jpx3.intave.adapter.MinecraftVersion;
@@ -44,6 +45,7 @@ import de.jpx3.intave.check.movement.physics.evaluation.SimulationEvaluator;
 import de.jpx3.intave.check.movement.physics.search.RedoSimulationSearch;
 import de.jpx3.intave.check.movement.physics.search.SimulationSearch;
 import de.jpx3.intave.check.movement.physics.search.ThreeTickSimulationSearch;
+import de.jpx3.intave.check.movement.physics.search.TickSearch;
 import de.jpx3.intave.check.movement.physics.simulator.Simulation;
 import de.jpx3.intave.check.movement.physics.simulator.Simulator;
 import de.jpx3.intave.check.movement.physics.simulator.Simulators;
@@ -53,6 +55,7 @@ import de.jpx3.intave.diagnostic.message.MessageSeverity;
 import de.jpx3.intave.diagnostic.timings.Timings;
 import de.jpx3.intave.executor.BackgroundExecutors;
 import de.jpx3.intave.executor.Synchronizer;
+import de.jpx3.intave.math.Hypot;
 import de.jpx3.intave.math.MathHelper;
 import de.jpx3.intave.module.Modules;
 import de.jpx3.intave.module.mitigate.AttackNerfStrategy;
@@ -62,6 +65,7 @@ import de.jpx3.intave.module.violation.Violation;
 import de.jpx3.intave.module.violation.ViolationContext;
 import de.jpx3.intave.packet.PacketSender;
 import de.jpx3.intave.player.FaultKicks;
+import de.jpx3.intave.player.ItemProperties;
 import de.jpx3.intave.player.collider.Colliders;
 import de.jpx3.intave.player.collider.complex.SimulationResult;
 import de.jpx3.intave.player.collider.simple.SimpleColliderResult;
@@ -141,7 +145,7 @@ public final class Physics extends Check {
     boolean detectNoSlowdown = settings.boolBy("enforce-item-slowdown", true);
     this.simulationEvaluator = new DefaultSimulationEvaluator();
 
-    SimulationSearch search = new ThreeTickSimulationSearch(resetItemUsage, detectNoSlowdown);
+    SimulationSearch search = new ThreeTickSimulationSearch(detectNoSlowdown);
     search = RedoSimulationSearch.of(search, simulationEvaluator);
 //    search = RollbackSimulationSearch.of(search, simulationEvaluator);
     this.simulationSearch = search;
@@ -200,17 +204,18 @@ public final class Physics extends Check {
 
     Timings.CHECK_PHYSICS_PROC.start();
     // simulation
-    Simulation simulation;
-
+    TickSearch tickSearch;
     SimulationEnvironment simulationEnvironment = movementData.mutableView();
 
     try {
-      simulation = simulationSearch.greedyFuzzyTickSearch(user, simulationEnvironment, simulator);
+      tickSearch = simulationSearch.greedyFuzzyTickSearch(user, simulationEnvironment, simulator);
     } catch (IllegalStateException exception) {
       user.kick("Exception while simulating movement");
       exception.printStackTrace();
       return;
     }
+
+    Simulation simulation = tickSearch.simulation();
 
     if (simulation == Simulation.invalid()) {
       user.kick("Invalid simulation result");
@@ -251,7 +256,8 @@ public final class Physics extends Check {
     movementData.assumeOccurred(simulation);
     Timings.CHECK_PHYSICS_EVAL.start();
     // evaluation
-    evaluateBestSimulation(user, simulation);
+    evaluateBestSimulation(user, tickSearch);
+    checkNoSlowdownState(user, tickSearch);
     Timings.CHECK_PHYSICS_EVAL.stop();
     Timings.CHECK_PHYSICS_PROC.stop();
     if (withRotation) {
@@ -398,7 +404,8 @@ public final class Physics extends Check {
   /**
    * This method is too big, please refactor
    */
-  private void evaluateBestSimulation(User user, Simulation simulation) {
+  private void evaluateBestSimulation(User user, TickSearch tickSearch) {
+    Simulation simulation = tickSearch.simulation();
     Player player = user.player();
     MetadataBundle meta = user.meta();
     boolean spectator = player.getGameMode() == GameMode.SPECTATOR;
@@ -433,6 +440,10 @@ public final class Physics extends Check {
     double receivedPositionX = movementData.positionX();
     double receivedPositionY = movementData.positionY();
     double receivedPositionZ = movementData.positionZ();
+    boolean clientChunkLoaded = meta.connection().hasClientChunk(
+      floor(receivedPositionX) >> 4,
+      floor(receivedPositionZ) >> 4
+    );
     double positionX = movementData.verifiedLastPositionX();
     double positionY = movementData.verifiedLastPositionY();
     double positionZ = movementData.verifiedLastPositionZ();
@@ -503,7 +514,8 @@ public final class Physics extends Check {
 
     boolean velocityDetected = false;
 
-    boolean checkVelocity = !skipVLCalculation
+    boolean checkVelocity = clientChunkLoaded
+      && !skipVLCalculation
       && movementData.ticksPast(IN_WEB) > 5
       && !movementData.inWater()
       && !movementData.collidedWithBoat();
@@ -624,7 +636,7 @@ public final class Physics extends Check {
       violationLevelIncrease = 0;
     }
 
-    if (violationLevelData.physicsInsignificantBufferVL < 3 &&
+    if (clientChunkLoaded && violationLevelData.physicsInsignificantBufferVL < 3 &&
       violationLevelData.physicsVL + violationLevelIncrease > 50 &&
       violationLevelIncrease > 0 && !movementData.inWeb() && !movementData.inWater() &&
       distance > 0.001
@@ -723,21 +735,23 @@ public final class Physics extends Check {
       }
       violationLevelIncrease = Math.min(200.0, violationLevelIncrease);
       violationLevelIncrease = Math.max(1, violationLevelIncrease);
-      violationLevelData.physicsVL = MathHelper.minmax(0, violationLevelData.physicsVL + violationLevelIncrease, 200);
-      violationLevelData.physicsInvalidMovementsInRow += (distance < 0.01 ? 0.25 : (distance < 0.05 ? 0.5 : 1));
-      if (
-        violationLevelData.physicsOffset > latantDistance
-          && distance > 0.001
-          && !spectator
-          && violationLevelData.physicsVL > 50
-      ) {
-        if (physicsReport == null) {
-          physicsReport = new PhysicsReport(user);
+      if (clientChunkLoaded) {
+        violationLevelData.physicsVL = MathHelper.minmax(0, violationLevelData.physicsVL + violationLevelIncrease, 200);
+        violationLevelData.physicsInvalidMovementsInRow += (distance < 0.01 ? 0.25 : (distance < 0.05 ? 0.5 : 1));
+        if (
+          violationLevelData.physicsOffset > latantDistance
+            && distance > 0.001
+            && !spectator
+            && violationLevelData.physicsVL > 50
+        ) {
+          if (physicsReport == null) {
+            physicsReport = new PhysicsReport(user);
+          }
         }
-      }
-      if (violationLevelData.physicsVL > 20) {
-        if (!IntaveControl.IGNORE_CACHE_REFRESH_ON_SIMULATION_FAULT) {
-          blockStateAccess.invalidateAll();
+        if (violationLevelData.physicsVL > 20) {
+          if (!IntaveControl.IGNORE_CACHE_REFRESH_ON_SIMULATION_FAULT) {
+            blockStateAccess.invalidateAll();
+          }
         }
       }
     } else {
@@ -759,60 +773,31 @@ public final class Physics extends Check {
     // santiy checks
     performMovementSanityChecks(user, receivedOffsetMotionX, receivedOffsetMotionY, receivedOffsetMotionZ);
 
-    if (offsetRequirement && !spectator && violationLevelData.physicsVL > 50 && violationLevelIncrease > 0) {
+    boolean physicsFlag = offsetRequirement
+      && !spectator
+      && violationLevelIncrease > 0
+      && (violationLevelData.physicsVL > 50 || !clientChunkLoaded);
+    if (physicsFlag) {
       String received = formatPosition(receivedOffsetMotionX, receivedOffsetMotionY, receivedOffsetMotionZ);
       String expected = formatPosition(predictedOffsetX, predictedOffsetY, predictedOffsetZ);
       String actual = formatPosition(actualMotion.motionX, actualMotion.motionY, actualMotion.motionZ);
 
-//      PhysicsReport report = physicsReport == null ? new PhysicsReport(user) : physicsReport;
-//      try {
-//        ReportFileWriter.writeNew(
-//          IntavePlugin.singletonInstance().getDataFolder().toPath().resolve("physicsreports"),
-//          "intave-physicsreport",
-//          report
-//        );
-//      } catch (IOException | RuntimeException exception) {
-//        IntaveLogger.logger().error(
-//          "Unable to write physics report: "
-//            + exception.getClass().getSimpleName()
-//            + ": "
-//            + exception.getMessage()
-//        );
-//      }
+//      user.sendReport(physicsReport == null ? new PhysicsReport(user) : physicsReport);
 
-	    String message = "moved incorrectly";
-//      String details = received + " actual: " + expected;
-      String details = "";
-
-      details += formatDouble(distance, 6) + " / ";
-
-      String vlInfo = "";
-      if (verticalViolationIncrease > 500) {
-        vlInfo += "mv";
-      } else if (verticalViolationIncrease < 0.1) {
-        vlInfo += "0v";
-      } else {
-        vlInfo += formatDouble(verticalViolationIncrease, 1) + "v";
+      // Must be here to trigger the flag
+      if (!clientChunkLoaded) {
+        violationLevelIncrease = 0;
       }
-      if (horizontalViolationIncrease > 500) {
-        vlInfo += "mh";
-      } else if (horizontalViolationIncrease < 0.1) {
-        vlInfo += "0h";
-      } else {
-        vlInfo += formatDouble(horizontalViolationIncrease, 1) + "h";
-      }
-      details += vlInfo + " / ";
 
-      details += simulation.blueDetails().replace('/', '_');
-//      details += formatDouble(-differenceX, 4) + "dx " + formatDouble(-differenceY, 4) + "dy " + formatDouble(-differenceZ, 4) + "dz";
+      String message = "moved incorrectly";
+      String details = "Δ" + formatDouble(distance, 6)
+        + " / \uD83D\uDD0D" + tickSearch.simulationCount();
 
-      if (velocityDetected) {
-        details += ", strict";
+      if (user.meta().protocol().flyingPacketsCausePositionUncertainty()) {
+        details += "↧" + tickSearch.searchDepth();
       }
 
       if (movementData.forceCorrectReduce) {
-        details += velocityDetected ? "&" : ",";
-        details += " reduce force";
         user.nerf(AttackNerfStrategy.BLOCKING, "46");
       }
 
@@ -827,6 +812,7 @@ public final class Physics extends Check {
       }
       granularDebugs.put("insig", formatDouble(violationLevelData.physicsInsignificantBufferVL, 1));
       granularDebugs.put("acc/off", formatDouble(violationLevelData.physicsOffset, 2));
+      granularDebugs.put("client_chunk", clientChunkLoaded ? "loaded" : "unloaded");
       granularDebugs.put("s/c v", MinecraftVersion.current().getVersion() + " / " + user.protocolVersion());
       BlockShape collShape = Collision.shape(user, movementData, currentBoundingBox);
       granularDebugs.put("coll", collShape.toString());
@@ -947,6 +933,10 @@ public final class Physics extends Check {
         setback = true;
       }
 
+      if (!clientChunkLoaded) {
+        setback = true;
+      }
+
       if (user.trustFactor().atLeast(TrustFactor.BYPASS)) {
         setback = false;
       }
@@ -958,6 +948,13 @@ public final class Physics extends Check {
       }
 
       if (setback) {
+        recorder.physicsSetback(
+          user,
+          violation.message(),
+          violation.details(),
+          violation.addedViolationPoints(),
+          violationContext.violationLevelAfter()
+        );
         // resend attributes
         statisticApply(user, CheckStatistics::increaseFails);
 
@@ -1331,6 +1328,33 @@ public final class Physics extends Check {
         refreshBlock(player, position.toLocation(player.getWorld()));
       }
     });
+  }
+
+  private void checkNoSlowdownState(User user, TickSearch search) {
+    if (!resetItemUsage) {
+      return;
+    }
+
+    MetadataBundle meta = user.meta();
+    MovementMetadata movementData = meta.movement();
+    InventoryMetadata inventoryData = meta.inventory();
+
+    boolean movementProvesHandIsInactive = search.itemUseImpossible(0.001);
+    boolean packetsSuggestsHandIsActive = inventoryData.handActive();
+    if (packetsSuggestsHandIsActive && movementProvesHandIsInactive) {
+      boolean releaseHandConditions = Hypot.fast(movementData.offsetMotionX(), movementData.offsetMotionZ()) > 0.3 || movementData.ticksPast(TELEPORT) >= 2;
+      boolean itemIsBow = ItemProperties.isBow(meta.inventory().activeItemType()) || ItemProperties.isBow(meta.inventory().offhandItemType());
+      boolean viaVersionBlockReplacement = meta.protocol().viaVersionShieldBlockReplacement();
+      boolean ignoredSlowdown = releaseHandConditions && (!itemIsBow || (inventoryData.handActiveTicks > 3 && !viaVersionBlockReplacement));
+
+      if (ignoredSlowdown && movementData.handItemSimulationFails++ > 1) {
+        meta.inventory().releaseItemNextTick();
+
+        if (user.receives(MessageChannel.DEBUG_ITEM_RESETS)) {
+          user.player().sendMessage(IntavePlugin.prefix() + "Requesting item usage reset as " + ChatColor.RED + "movement/state discrepancy ");
+        }
+      }
+    }
   }
 
   private void refreshBlock(Player player, Location location) {

@@ -12,8 +12,6 @@ import de.jpx3.intave.check.combat.heuristics.combatpatterns.rotation.*;
 import de.jpx3.intave.check.combat.heuristics.inventory.PacketInventoryHeuristic;
 import de.jpx3.intave.check.combat.heuristics.other.*;
 import de.jpx3.intave.check.combat.heuristics.testing.TestingHeuristic;
-import org.bukkit.entity.Player;
-
 import java.util.HashMap;
 import java.util.Map;
 
@@ -54,14 +52,9 @@ public final class Heuristics extends Check {
   private void loadClassicConfiguration() {
     CheckConfiguration.CheckSettings settings = configuration().settings();
     for (HeuristicsClassicType classType : HeuristicsClassicType.values()) {
-      String fullConfigurationName = "classic." + classType.configurationName();
-      int violationLevelIncrease = settings.intBy(fullConfigurationName);
+      int violationLevelIncrease = settings.intBy(classType.configurationName());
       classicViolationLevelMap.put(classType, violationLevelIncrease);
     }
-  }
-
-  public void cloudFlag(Player player, String details) {
-    // soon:TM:
   }
 
   public Map<HeuristicsClassicType, Integer> classicViolationLevelMap() {

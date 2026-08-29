@@ -21,7 +21,15 @@ import org.jetbrains.annotations.NotNull;
 
 public final class MockFullBlockStaticPlane implements BlockCache {
   // 16 * 256 * 16
-  private final Long2BooleanOpenHashMap blockMap = new Long2BooleanOpenHashMap();
+  private final Long2BooleanOpenHashMap blockMap;
+
+  public MockFullBlockStaticPlane() {
+    this(16);
+  }
+
+  public MockFullBlockStaticPlane(int expectedBlocks) {
+    blockMap = new Long2BooleanOpenHashMap(expectedBlocks);
+  }
 
   boolean isStone(int posX, int posY, int posZ) {
     if (posY < -256 || posY >= 256 || posX < -256 || posX >= 256 || posZ < -256 || posZ >= 256) {
@@ -161,7 +169,7 @@ public final class MockFullBlockStaticPlane implements BlockCache {
   }
 
   public static MockFullBlockStaticPlane createWithHorizontalPlaneAt(int posY) {
-    MockFullBlockStaticPlane plane = new MockFullBlockStaticPlane();
+    MockFullBlockStaticPlane plane = new MockFullBlockStaticPlane(512 * 512);
     plane.horizontalFill(posY);
     return plane;
   }

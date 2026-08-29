@@ -1,10 +1,20 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.command.stages;
 
 import de.jpx3.intave.IntavePlugin;
+import de.jpx3.intave.cloud.Cloud;
 import de.jpx3.intave.command.CommandStage;
 import de.jpx3.intave.command.SubCommand;
-import de.jpx3.intave.connect.cloud.Cloud;
-import de.jpx3.intave.connect.cloud.protocol.Shard;
 import de.jpx3.intave.module.Modules;
 import de.jpx3.intave.module.nayoro.Nayoro;
 import de.jpx3.intave.user.User;
@@ -13,8 +23,6 @@ import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
-
-import java.util.Map;
 
 public final class CloudStage extends CommandStage {
   private static CloudStage singletonInstance;
@@ -37,36 +45,12 @@ public final class CloudStage extends CommandStage {
       return;
     }
 
-//    commandSender.sendMessage(IntavePlugin.prefix() + ChatColor.GRAY + "Status");
-    commandSender.sendMessage(IntavePlugin.prefix() + ChatColor.GRAY + "Connection status");
-
-    Map<Shard, Boolean> shardConnected = cloud.shardConnections();
-    Map<Shard, Long> receivedBytes = cloud.receivedBytesPerShard();
-    Map<Shard, Long> sentBytes = cloud.sentBytesPerShard();
+    commandSender.sendMessage(IntavePlugin.prefix() + "Connection status");
 
     // connected to at least one
-    boolean connectedToAtLeastOne = shardConnected.values().stream().anyMatch(b -> b);
+    boolean connectedToAtLeastOne = cloud.isConnected();
     commandSender.sendMessage(ChatColor.GRAY + " Cloud is " + (connectedToAtLeastOne ? ChatColor.GREEN + "connected" : ChatColor.RED + "disconnected"));
-
-    for (Map.Entry<Shard, Boolean> entry : shardConnected.entrySet()) {
-      Shard shard = entry.getKey();
-      boolean connected = entry.getValue();
-      commandSender.sendMessage(ChatColor.GRAY + " Shard " + ChatColor.GREEN + shard.name() + ChatColor.GRAY + " is " + (connected ? ChatColor.GREEN + "CONNECTED" : ChatColor.RED + "DISCONNECTED") + ChatColor.GRAY + " (" + ChatColor.GREEN + formatBytes(receivedBytes.get(shard)) + ChatColor.GRAY + " received, " + ChatColor.GREEN + formatBytes(sentBytes.get(shard)) + ChatColor.GRAY + " sent)");
-    }
-
-    if (connectedToAtLeastOne) {
-//      commandSender.sendMessage(" ");
-      cloud.generalStatusInquiry(stringStringMap -> {
-        if (stringStringMap == null || stringStringMap.isEmpty()) {
-          commandSender.sendMessage(IntavePlugin.prefix() + ChatColor.RED + "General status inquiry failed");
-          return;
-        }
-        commandSender.sendMessage(IntavePlugin.prefix() + ChatColor.GRAY + "Remote status (sent from cloud)");
-        // sorted by key (alphabetical)
-        stringStringMap.forEach((key, value) -> commandSender.sendMessage(ChatColor.GRAY +" " + key + ": " + ChatColor.RED +  ChatColor.translateAlternateColorCodes('&', value)));
-      });
-    }
-
+    commandSender.sendMessage(ChatColor.GRAY + " Received " + ChatColor.GREEN + formatBytes(cloud.receivedBytes()) + ChatColor.GRAY + ", sent " + ChatColor.GREEN + formatBytes(cloud.sentBytes()));
   }
 
   @SubCommand(
@@ -84,7 +68,7 @@ public final class CloudStage extends CommandStage {
 
     Nayoro nayoro = Modules.nayoro();
     for (Player onlinePlayer : Bukkit.getOnlinePlayers()) {
-      String mainBase = IntavePlugin.prefix() + ChatColor.GRAY + "Player " + ChatColor.RED + onlinePlayer.getName() + ChatColor.GRAY;
+      String mainBase = IntavePlugin.prefix() + "Player " + ChatColor.RED + onlinePlayer.getName() + ChatColor.GRAY;
       User user = UserRepository.userOf(onlinePlayer);
       if (nayoro.recordingActiveFor(user)) {
         mainBase += " is " + ChatColor.GREEN + "transmitting";

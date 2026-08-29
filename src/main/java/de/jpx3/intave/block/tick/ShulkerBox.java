@@ -1,78 +1,127 @@
+/*
+ * Copyright 2026 Intave
+ *
+ * This software is licensed under the PolyForm Perimeter License 1.0.0.
+ * You may use this software for any purpose, except for providing to
+ * others any product that competes with the software.
+ *
+ * A copy of the license is available at:
+ *   https://polyformproject.org/licenses/perimeter/1.0.0/
+ */
+
 package de.jpx3.intave.block.tick;
 
 import de.jpx3.intave.block.shape.BlockShape;
 import de.jpx3.intave.share.BoundingBox;
 import de.jpx3.intave.share.Direction;
 
+import java.util.Objects;
+
+/**
+ * Branch-local client animation state for one shulker-box block entity.
+ */
 public final class ShulkerBox {
-  private boolean opening;
-  private final Direction direction;
-  private int ticks;
+	private static final BoundingBox FULL_BLOCK = BoundingBox.originFrom(0, 0, 0, 1, 1, 1);
 
-  private ShulkerBox(boolean opening, Direction direction) {
-    this.ticks = opening ? 0 : 10;
-    this.opening = opening;
-    this.direction = direction;
-  }
+	private final boolean opening;
+	private final Direction direction;
+	private final float progress;
 
-  public void open() {
-    opening = true;
-  }
+	private ShulkerBox(boolean opening, Direction direction, float progress) {
+		this.opening = opening;
+		this.direction = Objects.requireNonNull(direction, "direction");
+		this.progress = progress;
+	}
 
-  public void close() {
-    opening = false;
-  }
+	public ShulkerBox open() {
+		return opening ? this : new ShulkerBox(true, direction, progress);
+	}
 
-  public boolean shouldTick() {
-    if (opening) {
-      return ticks < 10;
-    } else {
-      return ticks > 0;
-    }
-  }
+	public ShulkerBox close() {
+		return opening ? new ShulkerBox(false, direction, progress) : this;
+	}
 
-  public boolean complete() {
-    return !opening && ticks <= 0;
-  }
+	public boolean shouldTick() {
+		return opening ? progress < 1.0F : progress > 0.0F;
+	}
 
-  public void tick() {
-    if (opening) {
-      ticks++;
-    } else {
-      ticks--;
-    }
-  }
+	public boolean complete() {
+		return !opening && progress <= 0.0F;
+	}
 
-  private static final int INTRINSIC_OFFSET = 3;
-  private static final BoundingBox FULL_BLOCK = BoundingBox.originFrom(0, 0, 0, 1, 1, 1);
-  private static final BlockShape[][] CACHE = new BoundingBox[Direction.values().length][10 + INTRINSIC_OFFSET * 2];
+	public ShulkerBox tick() {
+		if (!shouldTick()) {
+			return this;
+		}
+		float nextProgress = progressAfterTick();
+		if (nextProgress >= 1.0F) {
+			nextProgress = 1.0F;
+		} else if (nextProgress <= 0.0F) {
+			nextProgress = 0.0F;
+		}
+		return new ShulkerBox(opening, direction, nextProgress);
+	}
 
-  public BlockShape originShape() {
-    if (ticks > 10 || ticks < 0) {
-      return FULL_BLOCK;
-    }
-    int directionId = direction.ordinal();
-    BlockShape cached = CACHE[directionId][ticks + INTRINSIC_OFFSET];
-    if (cached == null) {
-      double progress = progress();
-      return CACHE[directionId][ticks + INTRINSIC_OFFSET] = FULL_BLOCK.expand(
-        0.5 * progress * direction.offsetX(),
-        0.5 * progress * direction.offsetY(),
-        0.5 * progress * direction.offsetZ()
-      );
-    }
-    return cached;
-  }
+	float progressAfterTick() {
+		return opening ? progress + 0.1F : progress - 0.1F;
+	}
 
-  public double progress() {
-    return ticks / 10.0;
-  }
+	ShulkerBox withProgress(float newProgress) {
+		return new ShulkerBox(opening, direction, newProgress);
+	}
 
-  public static ShulkerBox opening(Direction direction) {
-    return new ShulkerBox(true, direction);
-  }
+	public BlockShape originShape() {
+		float expansion = 0.5F * progress;
+		return FULL_BLOCK.expand(
+			expansion * direction.offsetX(),
+			expansion * direction.offsetY(),
+			expansion * direction.offsetZ()
+		);
+	}
 
-  public static ShulkerBox closing(Direction direction) {
-    return new ShulkerBox(false, direction);
-  }
+	public boolean opening() {
+		return opening;
+	}
+
+	public Direction direction() {
+		return direction;
+	}
+
+	public float progress() {
+		return progress;
+	}
+
+	public static ShulkerBox opening(Direction direction) {
+		return new ShulkerBox(true, direction, 0.0F);
+	}
+
+	public static ShulkerBox closing(Direction direction) {
+		return new ShulkerBox(false, direction, 1.0F);
+	}
+
+	@Override
+	public boolean equals(Object object) {
+		if (this == object) {
+			return true;
+		}
+		if (!(object instanceof ShulkerBox)) {
+			return false;
+		}
+		ShulkerBox other = (ShulkerBox) object;
+		return opening == other.opening
+			&& Float.compare(progress, other.progress) == 0
+			&& direction == other.direction;
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(opening, direction, progress);
+	}
+
+	@Override
+	public String toString() {
+		return "ShulkerBox{opening=" + opening
+			+ ", direction=" + direction
+			+ ", progress=" + progress + '}';
+	}
 }
